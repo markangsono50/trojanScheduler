@@ -252,6 +252,7 @@ def filter_and_pin_sections(
     course_input: CourseInput,
     constraints: Constraints,
     rmp_cap: int = 10,
+    planning_mode: bool = False,
 ) -> tuple[list[Section], Optional[str]]:
     """
     Apply all pre-processing rules to a list of raw sections for one course input.
@@ -269,10 +270,13 @@ def filter_and_pin_sections(
     """
     label = course_input.code or course_input.ge_code or "this course"
 
-    # 1. Remove full sections
-    result = [s for s in sections if s.seats_available > 0]
-    if not result:
-        return [], f"No open sections found for {label}."
+    # 1. Remove full sections (skipped in planning mode)
+    if planning_mode:
+        result = list(sections)
+    else:
+        result = [s for s in sections if s.seats_available > 0]
+        if not result:
+            return [], f"No open sections found for {label}."
 
     # 2. Modality
     result = [s for s in result if _modality_ok(s, constraints)]
@@ -336,6 +340,7 @@ def expand_to_pairs(
     sections: list[Section],
     constraints: Constraints,
     preferred_linked_section_ids: Optional[dict[str, str]] = None,
+    planning_mode: bool = False,
 ) -> tuple[list[SectionPair], bool, dict[str, list]]:
     """
     Expand lecture sections into SectionPairs, where each pair bundles one
@@ -377,9 +382,9 @@ def expand_to_pairs(
             for stype, group in by_type.items()
         }
 
-        # Eligible = filtered + has seats
+        # Eligible = filtered + has seats (seat filter skipped in planning mode)
         eligible_by_type: dict[str, list[LinkedSection]] = {
-            stype: [ls for ls in display if ls.seats_available > 0]
+            stype: (list(display) if planning_mode else [ls for ls in display if ls.seats_available > 0])
             for stype, display in display_by_type.items()
         }
 
@@ -541,16 +546,18 @@ def _diagnose_over_constrained(
     sections: list[Section],
     course_code: str,
     constraints: Constraints,
+    planning_mode: bool = False,
 ) -> str:
     """
     When a course has sections in the catalog but none survive filtering,
     figure out which specific constraint is too tight and return
     a human-readable message.
     """
-    # Check seats
-    open_sections = [s for s in sections if s.seats_available > 0]
-    if not open_sections:
-        return f"All sections of {course_code} are currently full."
+    # Check seats (skipped in planning mode)
+    if not planning_mode:
+        open_sections = [s for s in sections if s.seats_available > 0]
+        if not open_sections:
+            return f"All sections of {course_code} are currently full."
 
     # Check modality
     modality_ok = [s for s in open_sections if s.modality == constraints.modality
@@ -640,6 +647,7 @@ def resolve_must_haves(
     constraints: Constraints,
     rmp_cap: int = 10,
     max_combinations: int = 500,
+    planning_mode: bool = False,
 ) -> SolverResult:
     """
     Full must-have resolution pipeline:
@@ -671,7 +679,7 @@ def resolve_must_haves(
 
         # Filter and pin
         filtered, error = filter_and_pin_sections(
-            raw_sections, course_input, constraints, rmp_cap
+            raw_sections, course_input, constraints, rmp_cap, planning_mode=planning_mode
         )
         if error:
             result.errors.append(error)
@@ -682,10 +690,11 @@ def resolve_must_haves(
             filtered,
             constraints,
             preferred_linked_section_ids=course_input.preferred_linked_section_ids,
+            planning_mode=planning_mode,
         )
 
         if not pairs:
-            msg = _diagnose_over_constrained(raw_sections, course_code, constraints)
+            msg = _diagnose_over_constrained(raw_sections, course_code, constraints, planning_mode=planning_mode)
             result.errors.append(msg)
             continue
 
@@ -734,6 +743,7 @@ def auto_select_ge(
     ge_input: "CourseInput",
     runner_up_count: int = 4,
     rmp_cap: int = 10,
+    planning_mode: bool = False,
 ) -> tuple[Optional[SectionPair], list[SectionPair], Optional[str]]:
     """
     From a list of GE candidate sections, pick the highest-RMP pair
@@ -762,12 +772,13 @@ def auto_select_ge(
         ge_input,
         constraints,
         rmp_cap,
+        planning_mode=planning_mode,
     )
     if error or not filtered:
         return None, [], f"No valid courses found for {ge_slot}."
 
     # Expand to pairs
-    pairs, _, _ = expand_to_pairs(filtered, constraints)
+    pairs, _, _ = expand_to_pairs(filtered, constraints, planning_mode=planning_mode)
     if not pairs:
         return None, [], f"No valid courses found for {ge_slot}."
 
@@ -813,6 +824,7 @@ def inject_nice_to_haves(
     constraints: Constraints,
     max_units: int,
     rmp_cap: int = 10,
+    planning_mode: bool = False,
 ) -> list[SectionPair]:
     """
     Attempt to add nice-to-have courses to an existing combination.
@@ -830,11 +842,11 @@ def inject_nice_to_haves(
         if not raw_sections:
             continue
 
-        filtered, _ = filter_and_pin_sections(raw_sections, course_input, constraints, rmp_cap)
+        filtered, _ = filter_and_pin_sections(raw_sections, course_input, constraints, rmp_cap, planning_mode=planning_mode)
         if not filtered:
             continue
 
-        pairs, _, _ = expand_to_pairs(filtered, constraints, course_input.preferred_linked_section_ids)
+        pairs, _, _ = expand_to_pairs(filtered, constraints, course_input.preferred_linked_section_ids, planning_mode=planning_mode)
         if not pairs:
             continue
 
@@ -1225,6 +1237,7 @@ def build_schedules(
     top_n: int = 3,
     rmp_cap: int = 10,
     max_combinations: int = 500,
+    planning_mode: bool = False,
 ) -> dict:
     """
     Full solver pipeline. Called by main.py after scraper + rmp.py have run.
@@ -1270,6 +1283,7 @@ def build_schedules(
         constraints,
         rmp_cap,
         max_combinations,
+        planning_mode=planning_mode,
     )
 
     # Handle linked section prompt needed (lab/quiz/discussion courses)
@@ -1346,6 +1360,7 @@ def build_schedules(
                 ge_input=ge_input,
                 runner_up_count=4,
                 rmp_cap=rmp_cap,
+                planning_mode=planning_mode,
             )
 
             if error:
@@ -1368,6 +1383,7 @@ def build_schedules(
             constraints,
             constraints.max_units,
             rmp_cap,
+            planning_mode=planning_mode,
         )
 
         # Final unit cap check

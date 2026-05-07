@@ -23,6 +23,7 @@ export default function Home() {
   const [discussionPromptCourse, setDiscussionPromptCourse] = useState<string | null>(null)
   const [discussionOptions, setDiscussionOptions] = useState<DiscussionOption[]>([])
   const [pendingPayload, setPendingPayload] = useState<GenerateRequest | null>(null)
+  const [planningMode, setPlanningMode] = useState(false)
 
   const callGenerate = async (payload: GenerateRequest) => {
     setError(null)
@@ -64,6 +65,7 @@ export default function Home() {
   }
 
   const handleSubmit = (payload: GenerateRequest) => {
+    setPlanningMode(payload.planning_mode ?? false)
     setPendingPayload(payload)
     callGenerate(payload)
   }
@@ -204,6 +206,7 @@ export default function Home() {
                   isSelected={selectedSchedule?.rank === sched.rank}
                   dimmed={stage === "detail" && selectedSchedule?.rank !== sched.rank}
                   onSelect={handleSelect}
+                  planningMode={planningMode}
                 />
               ))}
             </div>

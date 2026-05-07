@@ -35,6 +35,7 @@ class GenerateRequest(BaseModel):
     constraints: Constraints
     prof_slider: float = 0.5
     convenience_slider: float = 0.5
+    planning_mode: bool = False
     discussion_preferences: dict[str, str] | None = None          # legacy: course_code -> section_id
     linked_section_preferences: dict[str, dict[str, str]] | None = None  # course_code -> type -> section_id
 
@@ -322,6 +323,7 @@ async def generate(req: GenerateRequest):
         constraints=solver_constraints,
         prof_slider=req.prof_slider,
         convenience_slider=req.convenience_slider,
+        planning_mode=req.planning_mode,
     )
 
     # 7. Render schedule images

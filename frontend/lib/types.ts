@@ -45,6 +45,7 @@ export interface GenerateRequest {
   constraints: Constraints
   prof_slider: number             // 0–1
   convenience_slider: number      // 0–1
+  planning_mode?: boolean
   // Sent on second attempt if needs_discussion_prompt was returned
   discussion_preferences?: Record<string, string>  // course_code -> chosen section_id
 }

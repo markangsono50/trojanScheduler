@@ -693,6 +693,7 @@ export default function InputForm({
   const [convSlider, setConvSlider] = useState(0.5)
   const [showDaysOff, setShowDaysOff] = useState(false)
   const [rankingsOpen, setRankingsOpen] = useState(false)
+  const [planningMode, setPlanningMode] = useState(false)
 
   const updateEntry = (
     list: Entry[],
@@ -731,6 +732,7 @@ export default function InputForm({
       constraints,
       prof_slider: profSlider,
       convenience_slider: convSlider,
+      planning_mode: planningMode,
     })
   }
 
@@ -865,6 +867,36 @@ export default function InputForm({
 
       <div style={{ marginLeft: "22.222%", width: "77.778%", minHeight: "100vh", backgroundColor: "var(--bg-page)" }}>
         <div style={{ maxWidth: 860, margin: "0 auto", padding: "32px 56px 80px" }}>
+
+          {/* Planning Mode — global mode switch, top right */}
+          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginBottom: 20 }}>
+            <div className="relative group flex items-center gap-2">
+              <span style={{ fontSize: 11, color: planningMode ? "var(--cardinal)" : "var(--text-tertiary)", transition: "color 0.2s", userSelect: "none" as const }}>
+                Planning Mode
+              </span>
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ color: "var(--text-tertiary)", flexShrink: 0 }}>
+                <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
+                <path d="M8 7v5M8 5.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+              {/* Ghost tooltip — transparent bg, grey text */}
+              <div
+                className="absolute opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150"
+                style={{ top: "calc(100% + 6px)", right: 0, width: 250, background: "transparent", border: "none", padding: "4px 0", fontSize: 11, lineHeight: 1.6, color: "rgba(255,255,255,0.40)", zIndex: 50, textAlign: "right" as const }}
+              >
+                Includes sections at capacity in your results. Enrollment fluctuates throughout registration — waitlisting a full section is often a viable path.
+              </div>
+              <button
+                type="button"
+                onClick={() => setPlanningMode((v) => !v)}
+                style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
+                aria-label="Toggle Planning Mode"
+              >
+                <div className="toggle shrink-0 pointer-events-none" style={{ backgroundColor: planningMode ? "var(--cardinal)" : "var(--border-default)", transform: "scale(0.85)", transformOrigin: "center" }}>
+                  <div className="toggle-thumb" style={{ transform: planningMode ? "translateX(18px)" : "translateX(0)" }} />
+                </div>
+              </button>
+            </div>
+          </div>
 
           {error && (
             <div style={{ marginBottom: 28, padding: "12px 16px", borderRadius: 10, backgroundColor: "rgba(153,0,0,0.06)", border: "1px solid rgba(153,0,0,0.20)", color: "var(--cardinal)", fontSize: 13 }}>

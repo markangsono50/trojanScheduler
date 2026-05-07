@@ -12,6 +12,7 @@ interface Props {
   isSelected: boolean
   dimmed: boolean
   onSelect: (schedule: Schedule) => void
+  planningMode?: boolean
 }
 
 export default function ScheduleImageCard({
@@ -20,7 +21,11 @@ export default function ScheduleImageCard({
   isSelected,
   dimmed,
   onSelect,
+  planningMode = false,
 }: Props) {
+  const fullCount = planningMode
+    ? schedule.courses.filter((c) => c.seats_available === 0).length
+    : 0
   const isPlaceholder =
     !schedule.image_base64 || schedule.image_base64.startsWith("PLACEHOLDER")
 
@@ -71,6 +76,11 @@ export default function ScheduleImageCard({
         <Pill label={`📅 ${schedule.days_with_class.length}d / wk`} />
         {schedule.gap_minutes > 0 && (
           <Pill label={`⏱ ${schedule.gap_minutes}m gaps`} />
+        )}
+        {fullCount > 0 && (
+          <span className="px-2 py-0.5 rounded-md text-xs border border-red-500/30 bg-red-500/10 text-red-400">
+            {fullCount} FULL
+          </span>
         )}
       </div>
 

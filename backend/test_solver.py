@@ -1,0 +1,357 @@
+"""
+test_solver.py — Goal-driven tests for the planning_mode feature.
+
+Run: python3 test_solver.py
+Exits non-zero on any failure.
+
+These tests cover the contract: planning_mode must let the solver return
+schedules even when the user's *soft preferences* (time window, days off,
+modality, no-back-to-back) would otherwise eliminate every candidate. It
+must still honor *explicit choices* (section_id pin).
+"""
+from __future__ import annotations
+import sys
+import traceback
+
+from solver import (
+    Section,
+    LinkedSection,
+    CourseInput,
+    Constraints,
+    build_schedules,
+)
+
+
+# ---------------------------------------------------------------------------
+# Fixture helpers
+# ---------------------------------------------------------------------------
+
+def make_section(
+    course: str,
+    section_id: str,
+    days: list[str],
+    start_time: str,
+    end_time: str,
+    *,
+    professor: str = "Prof Smith",
+    modality: str = "in_person",
+    rmp_score: float = 3.5,
+    seats_available: int = 10,
+    total_seats: int = 30,
+    units: float = 4.0,
+    linked_sections: list[LinkedSection] | None = None,
+) -> Section:
+    return Section(
+        course=course,
+        section_id=section_id,
+        section_type="lecture",
+        professor=professor,
+        days=days,
+        start_time=start_time,
+        end_time=end_time,
+        location="TBA",
+        units=units,
+        modality=modality,
+        seats_available=seats_available,
+        total_seats=total_seats,
+        ge_categories=[],
+        rmp_score=rmp_score,
+        linked_sections=linked_sections or [],
+    )
+
+
+def base_constraints(
+    *,
+    earliest_start: str = "10:00",
+    latest_end: str = "17:00",
+    days_off: list[str] | None = None,
+    max_units: int = 20,
+    no_back_to_back: bool = False,
+    modality: str = "no_preference",
+) -> Constraints:
+    return Constraints(
+        earliest_start=earliest_start,
+        latest_end=latest_end,
+        days_off=days_off or [],
+        max_units=max_units,
+        no_back_to_back=no_back_to_back,
+        modality=modality,
+    )
+
+
+def call_solver(sections_by_course, constraints, *, planning_mode: bool):
+    must_haves = [
+        CourseInput(input_type="course", code=code)
+        for code in sections_by_course
+    ]
+    return build_schedules(
+        must_have_inputs=must_haves,
+        ge_inputs=[],
+        nice_to_have_inputs=[],
+        all_sections=sections_by_course,
+        ge_candidates={},
+        constraints=constraints,
+        planning_mode=planning_mode,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+
+def test_planning_mode_returns_schedules_despite_tight_time_window():
+    # Only an early-morning section exists; user's window is 10:00–17:00.
+    sections = {
+        "CSCI 270": [make_section("CSCI 270", "20001", ["Mon", "Wed"], "07:00", "08:30")],
+    }
+    cons = base_constraints(earliest_start="10:00", latest_end="17:00")
+
+    strict = call_solver(sections, cons, planning_mode=False)
+    planning = call_solver(sections, cons, planning_mode=True)
+
+    assert strict["error"] is not None, "strict mode should error on out-of-window sections"
+    assert not strict["schedules"], "strict mode should produce no schedules"
+
+    assert planning["error"] is None, f"planning mode should not error; got: {planning['error']!r}"
+    assert len(planning["schedules"]) >= 1, "planning mode should return at least one schedule"
+
+
+def test_planning_mode_returns_schedules_despite_days_off():
+    # Section meets MWF; user marks all three as days off.
+    sections = {
+        "MATH 225": [make_section("MATH 225", "30001", ["Mon", "Wed", "Fri"], "11:00", "12:00")],
+    }
+    cons = base_constraints(days_off=["Mon", "Wed", "Fri"])
+
+    strict = call_solver(sections, cons, planning_mode=False)
+    planning = call_solver(sections, cons, planning_mode=True)
+
+    assert strict["error"] is not None
+    assert planning["error"] is None, f"planning mode should not error; got: {planning['error']!r}"
+    assert len(planning["schedules"]) >= 1
+
+
+def test_planning_mode_returns_schedules_despite_modality_mismatch():
+    # Section is in_person; user requests online only.
+    sections = {
+        "WRIT 340": [make_section(
+            "WRIT 340", "40001", ["Tue", "Thu"], "11:00", "12:20",
+            modality="in_person",
+        )],
+    }
+    cons = base_constraints(modality="online")
+
+    strict = call_solver(sections, cons, planning_mode=False)
+    planning = call_solver(sections, cons, planning_mode=True)
+
+    assert strict["error"] is not None
+    assert planning["error"] is None, f"planning mode should not error; got: {planning['error']!r}"
+    assert len(planning["schedules"]) >= 1
+
+
+def test_planning_mode_still_honors_section_id_pin():
+    # User pinned a section_id that does not exist. planning_mode must NOT
+    # silently swap to another section — the pin is explicit, not a soft pref.
+    sections = {
+        "CSCI 270": [make_section("CSCI 270", "20001", ["Mon", "Wed"], "11:00", "12:00")],
+    }
+    cons = base_constraints()
+
+    must_haves = [CourseInput(input_type="course", code="CSCI 270", section_id="99999")]
+    result = build_schedules(
+        must_have_inputs=must_haves,
+        ge_inputs=[],
+        nice_to_have_inputs=[],
+        all_sections=sections,
+        ge_candidates={},
+        constraints=cons,
+        planning_mode=True,
+    )
+    assert result["error"] is not None, "pin to nonexistent section must still error in planning_mode"
+    assert not result["schedules"]
+
+
+def test_planning_mode_relaxes_no_back_to_back():
+    # Two courses scheduled back-to-back (no gap). With no_back_to_back=True
+    # they'd be rejected (10-min buffer required). planning_mode must bypass.
+    sections = {
+        "AAA 100": [make_section("AAA 100", "10001", ["Mon"], "10:00", "10:50")],
+        "BBB 100": [make_section("BBB 100", "10002", ["Mon"], "10:50", "11:40")],
+    }
+    cons = base_constraints(no_back_to_back=True, max_units=20)
+
+    strict = call_solver(sections, cons, planning_mode=False)
+    planning = call_solver(sections, cons, planning_mode=True)
+
+    # Strict: back-to-back enforced → no valid 2-course schedule.
+    assert not strict["schedules"], "no_back_to_back should reject this combo when strict"
+    # Planning: buffer relaxed → both courses fit.
+    assert planning["error"] is None, f"planning mode should not error; got: {planning['error']!r}"
+    assert len(planning["schedules"]) >= 1
+    assert len(planning["schedules"][0]["courses"]) == 2
+
+
+def test_strict_mode_still_works_for_happy_path():
+    # Regression guard: nothing the planning_mode change does should break
+    # the normal case. A clean schedule that satisfies all constraints must
+    # still produce results in strict mode.
+    sections = {
+        "CSCI 270": [make_section("CSCI 270", "20001", ["Mon", "Wed"], "11:00", "12:00")],
+        "MATH 225": [make_section("MATH 225", "30001", ["Tue", "Thu"], "13:00", "14:20")],
+    }
+    cons = base_constraints()
+
+    result = call_solver(sections, cons, planning_mode=False)
+    assert result["error"] is None, f"happy path should not error; got: {result['error']!r}"
+    assert len(result["schedules"]) >= 1
+    assert len(result["schedules"][0]["courses"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# Adaptive-rmp-cap test (covers Change 2)
+# ---------------------------------------------------------------------------
+
+def test_adaptive_rmp_cap_finds_solution_when_top_10_conflict():
+    # 11 sections per course. Top 10 by RMP all meet at MW 11:00 (conflict
+    # pairwise across courses since both courses meet at the same time).
+    # The 11th section in each course meets at a non-conflicting slot.
+    # With rmp_cap=10 only, both courses' top-10 collide → no schedule.
+    # The adaptive fallback should widen rmp_cap and find the rank-11 combo.
+    def slot_for(i: int) -> tuple[list[str], str, str]:
+        # The first 10 sections share the same MW 11:00 slot to force conflict.
+        # The 11th section uses a unique non-conflicting time.
+        if i < 10:
+            return ["Mon", "Wed"], "11:00", "12:00"
+        return ["Tue", "Thu"], "11:00", "12:00"
+
+    def build(course: str, prefix: str) -> list[Section]:
+        out = []
+        for i in range(11):
+            days, start, end = slot_for(i)
+            # High RMP for top 10, low RMP for rank-11 so they sort to the bottom
+            rmp = 4.8 if i < 10 else 2.0
+            out.append(make_section(
+                course, f"{prefix}{i:03d}", days, start, end,
+                rmp_score=rmp, professor=f"Prof {prefix}{i}",
+            ))
+        return out
+
+    sections = {
+        "AAA 100": build("AAA 100", "A"),
+        "BBB 100": build("BBB 100", "B"),
+    }
+    # AAA rank-11 is Tue/Thu 11:00; BBB rank-11 is Tue/Thu 11:00 → also conflict!
+    # Fix: give BBB rank-11 a different slot.
+    sections["BBB 100"][10] = make_section(
+        "BBB 100", "B010", ["Tue", "Thu"], "14:00", "15:00",
+        rmp_score=2.0, professor="Prof B10",
+    )
+
+    cons = base_constraints()
+    result = call_solver(sections, cons, planning_mode=False)
+    assert result["error"] is None, (
+        f"adaptive rmp_cap should find the rank-11 combo; got error: {result['error']!r}"
+    )
+    assert len(result["schedules"]) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Runner
+# ---------------------------------------------------------------------------
+
+def test_planning_mode_penalizes_constraint_violations():
+    # One course with two lectures: A fits the user's 10:00-17:00 window,
+    # B is at 07:00 (violates). Planning mode must surface BOTH (so the user
+    # can see all options) but rank the preference-matching A higher.
+    sections = {
+        "CSCI 270": [
+            make_section("CSCI 270", "A001", ["Mon", "Wed"], "11:00", "12:00",
+                         professor="Prof Fits"),
+            make_section("CSCI 270", "B001", ["Mon", "Wed"], "07:00", "08:00",
+                         professor="Prof Violates"),
+        ],
+    }
+    cons = base_constraints(earliest_start="10:00", latest_end="17:00")
+
+    result = call_solver(sections, cons, planning_mode=True)
+    assert result["error"] is None, f"planning mode should not error; got {result['error']!r}"
+    assert len(result["schedules"]) >= 2, (
+        f"expected at least 2 schedules in planning mode, got {len(result['schedules'])}"
+    )
+
+    # Top schedule should be the one whose section fits the window.
+    top_section_ids = {c["section_id"] for c in result["schedules"][0]["courses"]}
+    assert "A001" in top_section_ids, (
+        f"top schedule should contain A001 (fits window), got {top_section_ids}"
+    )
+    # The violating schedule should also appear but with a lower score.
+    scores = [s["score"] for s in result["schedules"]]
+    assert scores[0] > scores[-1], (
+        f"preference-matching schedule should score higher; scores={scores}"
+    )
+
+
+def test_planning_mode_ignores_seat_count_in_score():
+    # Two lectures with identical attributes EXCEPT seat count.
+    # In planning mode, score must be identical (seats neutralized).
+    sections = {
+        "CSCI 270": [
+            make_section("CSCI 270", "FULL", ["Mon", "Wed"], "11:00", "12:00",
+                         professor="Prof Full", seats_available=0, total_seats=30),
+            make_section("CSCI 270", "OPEN", ["Mon", "Wed"], "13:00", "14:00",
+                         professor="Prof Open", seats_available=20, total_seats=30),
+        ],
+    }
+    cons = base_constraints()
+
+    result = call_solver(sections, cons, planning_mode=True)
+    assert result["error"] is None
+    assert len(result["schedules"]) == 2
+
+    score_by_id = {
+        s["courses"][0]["section_id"]: s["score"]
+        for s in result["schedules"]
+    }
+    assert score_by_id["FULL"] == score_by_id["OPEN"], (
+        f"seat counts must not affect score in planning mode; got {score_by_id}"
+    )
+
+
+TESTS = [
+    test_planning_mode_returns_schedules_despite_tight_time_window,
+    test_planning_mode_returns_schedules_despite_days_off,
+    test_planning_mode_returns_schedules_despite_modality_mismatch,
+    test_planning_mode_still_honors_section_id_pin,
+    test_planning_mode_relaxes_no_back_to_back,
+    test_strict_mode_still_works_for_happy_path,
+    test_adaptive_rmp_cap_finds_solution_when_top_10_conflict,
+    test_planning_mode_penalizes_constraint_violations,
+    test_planning_mode_ignores_seat_count_in_score,
+]
+
+
+def main() -> int:
+    passed = 0
+    failed: list[tuple[str, str]] = []
+    for fn in TESTS:
+        name = fn.__name__
+        try:
+            fn()
+        except AssertionError as e:
+            failed.append((name, str(e) or "assertion failed"))
+            print(f"FAIL  {name}: {e}")
+            continue
+        except Exception:
+            failed.append((name, traceback.format_exc()))
+            print(f"ERROR {name}:")
+            traceback.print_exc()
+            continue
+        passed += 1
+        print(f"PASS  {name}")
+    print()
+    print(f"{passed}/{len(TESTS)} passed, {len(failed)} failed")
+    return 0 if not failed else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

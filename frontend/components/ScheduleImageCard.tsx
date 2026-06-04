@@ -1,10 +1,9 @@
-// Stage 3: schedule image card
-// Renders base64 PNG calendar image for one schedule option
-// Shows score badge, units, avg RMP below image
-// "Select Schedule A/B/C" button — on select, others fade to 30% opacity
+// Stage 3: schedule card. Renders a CSS schedule grid (no PNG) plus a
+// 4-metric strip and the select action.
 "use client"
 
 import { Schedule } from "@/lib/types"
+import ScheduleGrid from "./ScheduleGrid"
 
 interface Props {
   schedule: Schedule
@@ -26,249 +25,235 @@ export default function ScheduleImageCard({
   const fullCount = planningMode
     ? schedule.courses.filter((c) => c.seats_available === 0).length
     : 0
-  const isPlaceholder =
-    !schedule.image_base64 || schedule.image_base64.startsWith("PLACEHOLDER")
+
+  const borderColor = isSelected ? "var(--cardinal)" : "var(--border-subtle)"
+  const borderWidth = isSelected ? 1.5 : 1
 
   return (
     <div
-      className={`rounded-2xl overflow-hidden border transition-all duration-500 flex flex-col ${
-        isSelected
-          ? "border-[#990000] ring-2 ring-[#990000]/25 shadow-lg shadow-[#990000]/10"
-          : dimmed
-          ? "border-white/[0.04] opacity-30 pointer-events-none"
-          : "border-white/10 hover:border-white/20"
-      }`}
+      onClick={() => onSelect(schedule)}
+      style={{
+        background: "var(--bg-card)",
+        border: `${borderWidth}px solid ${borderColor}`,
+        borderRadius: 20,
+        boxShadow: isSelected
+          ? "0 12px 32px rgba(153,0,0,0.12), 0 2px 6px rgba(153,0,0,0.06)"
+          : "0 1px 2px rgba(0,0,0,0.04)",
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
+        cursor: "pointer",
+        opacity: dimmed ? 0.55 : 1,
+        transition: "transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, opacity 0.2s ease",
+      }}
+      onMouseEnter={(e) => {
+        if (isSelected) return
+        e.currentTarget.style.transform = "translateY(-4px)"
+        e.currentTarget.style.boxShadow = "0 18px 36px rgba(0,0,0,0.08), 0 4px 10px rgba(0,0,0,0.04)"
+        e.currentTarget.style.borderColor = "var(--border-default)"
+        if (dimmed) e.currentTarget.style.opacity = "0.85"
+      }}
+      onMouseLeave={(e) => {
+        if (isSelected) return
+        e.currentTarget.style.transform = "translateY(0)"
+        e.currentTarget.style.boxShadow = "0 1px 2px rgba(0,0,0,0.04)"
+        e.currentTarget.style.borderColor = "var(--border-subtle)"
+        if (dimmed) e.currentTarget.style.opacity = "0.55"
+      }}
     >
-      {/* Header strip */}
-      <div className="bg-white/[0.04] px-4 py-2.5 flex items-center justify-between border-b border-white/[0.06]">
-        <div className="flex items-center gap-2">
-          <span className="text-white font-bold text-sm tracking-wide">
-            Schedule {label}
-          </span>
-          {isSelected && (
-            <span className="text-[0.6rem] font-bold bg-[#990000] text-white px-1.5 py-0.5 rounded-md tracking-wide">
-              SELECTED
-            </span>
-          )}
+      {/* ── Header ─────────────────────────────────────── */}
+      <div style={{ padding: "24px 24px 16px", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+        <div>
+          <p
+            style={{
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+              fontSize: 10,
+              fontWeight: 600,
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              color: "var(--text-tertiary)",
+              marginBottom: 6,
+            }}
+          >
+            Option {schedule.rank} / 3
+          </p>
+          <h3
+            style={{
+              fontFamily: "'DM Serif Display', serif",
+              fontSize: 44,
+              lineHeight: 1,
+              color: "var(--text-primary)",
+              letterSpacing: "-0.02em",
+            }}
+          >
+            {label}
+          </h3>
         </div>
-        <span className="text-white/35 text-xs font-mono">
-          {schedule.total_units} units
-        </span>
+
+        <div style={{ textAlign: "right" }}>
+          <p
+            style={{
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+              fontSize: 10,
+              fontWeight: 600,
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              color: "var(--text-tertiary)",
+              marginBottom: 6,
+            }}
+          >
+            Score
+          </p>
+          <p
+            style={{
+              fontFamily: "'DM Serif Display', serif",
+              fontSize: 34,
+              lineHeight: 1,
+              color: scoreColor(schedule.score),
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {Math.round(schedule.score)}
+          </p>
+        </div>
       </div>
 
-      {/* Calendar image */}
-      <div className="relative bg-white/[0.02] aspect-[11/7]">
-        {!isPlaceholder ? (
-          <img
-            src={`data:image/png;base64,${schedule.image_base64}`}
-            alt={`Schedule ${label} calendar`}
-            className="w-full h-full object-cover"
-          />
-        ) : (
-          <PlaceholderGrid schedule={schedule} label={label} />
-        )}
-      </div>
-
-      {/* Score pills */}
-      <div className="bg-white/[0.03] px-4 py-3 flex items-center gap-2 flex-wrap border-t border-white/[0.06]">
-        <ScoreBadge score={schedule.score} />
-        <Pill label={`⭐ ${schedule.avg_rmp.toFixed(1)} RMP`} />
-        <Pill label={`📅 ${schedule.days_with_class.length}d / wk`} />
-        {schedule.gap_minutes > 0 && (
-          <Pill label={`⏱ ${schedule.gap_minutes}m gaps`} />
-        )}
-        {fullCount > 0 && (
-          <span className="px-2 py-0.5 rounded-md text-xs border border-red-500/30 bg-red-500/10 text-red-400">
-            {fullCount} FULL
-          </span>
-        )}
-      </div>
-
-      {/* Select button */}
-      <div className="px-4 pb-4 pt-2">
-        <button
-          onClick={() => onSelect(schedule)}
-          disabled={isSelected}
-          className={`w-full py-2.5 rounded-xl text-sm font-semibold transition-all ${
-            isSelected
-              ? "bg-[#990000] text-white cursor-default"
-              : "bg-white/[0.06] text-white/70 hover:bg-[#990000] hover:text-white border border-white/10 hover:border-[#990000]"
-          }`}
+      {/* ── Schedule grid (CSS, not PNG) ───────────────── */}
+      <div style={{ padding: "0 16px" }}>
+        <div
+          style={{
+            borderRadius: 14,
+            overflow: "hidden",
+            background: "var(--bg-card)",
+            border: "1px solid var(--border-subtle)",
+            aspectRatio: "11 / 7",
+            position: "relative",
+          }}
         >
-          {isSelected ? `✓  Schedule ${label} Selected` : `Select Schedule ${label}`}
+          <ScheduleGrid schedule={schedule} size="compact" />
+        </div>
+      </div>
+
+      {/* ── Metrics ────────────────────────────────────── */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(4, 1fr)",
+          padding: "20px 24px",
+          gap: 12,
+        }}
+      >
+        <Metric label="Units" value={schedule.total_units.toString()} />
+        <Metric label="Avg RMP" value={schedule.avg_rmp.toFixed(1)} />
+        <Metric label="Days" value={schedule.days_with_class.length.toString()} />
+        <Metric
+          label="Gaps"
+          value={schedule.gap_minutes > 0 ? `${schedule.gap_minutes}m` : "0m"}
+        />
+      </div>
+
+      {/* ── Status chip (planning mode warnings) ───────── */}
+      {fullCount > 0 && (
+        <div style={{ padding: "0 24px 16px" }}>
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "4px 10px",
+              borderRadius: 999,
+              fontSize: 11,
+              fontWeight: 600,
+              background: "rgba(153,0,0,0.06)",
+              color: "var(--cardinal)",
+              border: "1px solid rgba(153,0,0,0.20)",
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+            }}
+          >
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--cardinal)" }} />
+            {fullCount} full section{fullCount > 1 ? "s" : ""}
+          </span>
+        </div>
+      )}
+
+      {/* ── Action ────────────────────────────────────── */}
+      <div style={{ padding: "0 16px 16px", marginTop: "auto" }}>
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onSelect(schedule)
+          }}
+          style={{
+            width: "100%",
+            padding: "14px 16px",
+            borderRadius: 12,
+            border: "none",
+            fontFamily: "'Inter', sans-serif",
+            fontSize: 14,
+            fontWeight: 600,
+            letterSpacing: "0.01em",
+            cursor: "pointer",
+            background: isSelected ? "var(--cardinal)" : "var(--text-primary)",
+            color: "#ffffff",
+            transition: "background 0.15s ease, transform 0.1s ease",
+          }}
+          onMouseEnter={(e) => {
+            if (isSelected) {
+              e.currentTarget.style.background = "var(--cardinal-dark)"
+            } else {
+              e.currentTarget.style.background = "var(--cardinal)"
+            }
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = isSelected ? "var(--cardinal)" : "var(--text-primary)"
+          }}
+        >
+          {isSelected ? `Selected` : `Select Schedule ${label}`}
         </button>
       </div>
     </div>
   )
 }
 
-// ── Score badge ───────────────────────────────────────────────────────────────
+// ── Metric cell ───────────────────────────────────────────────────────────────
 
-function ScoreBadge({ score }: { score: number }) {
-  const color =
-    score >= 85
-      ? "text-emerald-400 bg-emerald-400/10 border-emerald-400/20"
-      : score >= 70
-      ? "text-yellow-400 bg-yellow-400/10 border-yellow-400/20"
-      : "text-red-400 bg-red-400/10 border-red-400/20"
-
+function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <span className={`px-2 py-0.5 rounded-md text-xs font-bold border ${color}`}>
-      {score} / 100
-    </span>
-  )
-}
-
-// ── Generic pill ──────────────────────────────────────────────────────────────
-
-function Pill({ label }: { label: string }) {
-  return (
-    <span className="px-2 py-0.5 rounded-md bg-white/[0.06] text-white/50 text-xs border border-white/[0.06]">
-      {label}
-    </span>
-  )
-}
-
-// ── Placeholder grid (shown when image_base64 is not yet available) ────────────
-
-function PlaceholderGrid({
-  schedule,
-  label,
-}: {
-  schedule: Schedule
-  label: string
-}) {
-  const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-  const COLORS = [
-    "bg-[#990000]/70",
-    "bg-blue-600/70",
-    "bg-emerald-600/70",
-    "bg-purple-600/70",
-    "bg-orange-500/70",
-  ]
-
-  // Map each course to a color index
-  const courseColors: Record<string, string> = {}
-  schedule.courses.forEach((c, i) => {
-    courseColors[c.course] = COLORS[i % COLORS.length]
-  })
-
-  // Convert "HH:MM" to a 0–1 position within 8am–8pm (720 min window)
-  const toPos = (time: string) => {
-    const [h, m] = time.split(":").map(Number)
-    return Math.max(0, Math.min(1, (h * 60 + m - 480) / 720))
-  }
-
-  return (
-    <div className="w-full h-full flex flex-col">
-      {/* Day headers */}
-      <div className="flex border-b border-white/[0.06]">
-        <div className="w-8 shrink-0" />
-        {DAYS.map((day) => (
-          <div
-            key={day}
-            className={`flex-1 text-center text-[0.6rem] font-semibold py-1 ${
-              schedule.days_with_class.includes(day)
-                ? "text-white/50"
-                : "text-white/15"
-            }`}
-          >
-            {day}
-          </div>
-        ))}
-      </div>
-
-      {/* Grid body */}
-      <div className="flex flex-1 relative">
-        {/* Time gutter */}
-        <div className="w-8 shrink-0 relative">
-          {["8a", "10a", "12p", "2p", "4p", "6p"].map((t, i) => (
-            <div
-              key={t}
-              className="absolute right-1 text-[0.5rem] text-white/20 leading-none"
-              style={{ top: `${(i / 5) * 100}%` }}
-            >
-              {t}
-            </div>
-          ))}
-        </div>
-
-        {/* Day columns */}
-        {DAYS.map((day) => (
-          <div
-            key={day}
-            className={`flex-1 relative border-l border-white/[0.04] ${
-              !schedule.days_with_class.includes(day) ? "bg-white/[0.01]" : ""
-            }`}
-          >
-            {/* Hour lines */}
-            {[0, 1, 2, 3, 4, 5].map((i) => (
-              <div
-                key={i}
-                className="absolute w-full border-t border-white/[0.04]"
-                style={{ top: `${(i / 5) * 100}%` }}
-              />
-            ))}
-
-            {/* Course blocks */}
-            {schedule.courses.map((course) => {
-              if (!course.days.includes(day)) return null
-              const top = toPos(course.start_time)
-              const height = toPos(course.end_time) - top
-              const color =
-                course.is_double_count
-                  ? "bg-[#FFCC00]/80 text-[#1a1a00]"
-                  : course.entry_type === "ge"
-                  ? "bg-orange-500/70 text-white"
-                  : `${courseColors[course.course]} text-white`
-
-              return (
-                <div
-                  key={course.section_id}
-                  className={`absolute left-0.5 right-0.5 rounded-sm px-0.5 overflow-hidden ${color}`}
-                  style={{
-                    top: `${top * 100}%`,
-                    height: `${Math.max(height * 100, 4)}%`,
-                  }}
-                >
-                  <p className="text-[0.5rem] font-bold leading-tight truncate pt-0.5">
-                    {course.course}
-                  </p>
-                </div>
-              )
-            })}
-
-            {/* Linked section blocks (discussion, lab, quiz, etc.) */}
-            {schedule.courses.flatMap((course) =>
-              course.linked_sections
-                .filter((ls) => ls.days.includes(day))
-                .map((ls) => {
-                  const top = toPos(ls.start_time)
-                  const height = toPos(ls.end_time) - top
-                  return (
-                    <div
-                      key={`${course.section_id}-${ls.section_id}`}
-                      className="absolute left-0.5 right-0.5 rounded-sm px-0.5 overflow-hidden bg-white/20"
-                      style={{
-                        top: `${top * 100}%`,
-                        height: `${Math.max(height * 100, 3)}%`,
-                      }}
-                    >
-                      <p className="text-[0.45rem] text-white/70 leading-tight truncate pt-0.5">
-                        {ls.section_type}
-                      </p>
-                    </div>
-                  )
-                })
-            )}
-          </div>
-        ))}
-      </div>
-
-      {/* Label overlay */}
-      <div className="absolute bottom-2 right-2 bg-black/50 text-white/30 text-[0.55rem] font-mono px-1.5 py-0.5 rounded">
-        Preview · Schedule {label}
-      </div>
+    <div>
+      <p
+        style={{
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          fontSize: 10,
+          fontWeight: 600,
+          letterSpacing: "0.15em",
+          textTransform: "uppercase",
+          color: "var(--text-tertiary)",
+          marginBottom: 6,
+        }}
+      >
+        {label}
+      </p>
+      <p
+        style={{
+          fontFamily: "'Inter', sans-serif",
+          fontSize: 20,
+          fontWeight: 600,
+          lineHeight: 1,
+          color: "var(--text-primary)",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {value}
+      </p>
     </div>
   )
+}
+
+// ── Score tier color ──────────────────────────────────────────────────────────
+
+function scoreColor(score: number): string {
+  if (score >= 85) return "#157A42" // emerald 700
+  if (score >= 70) return "var(--cardinal)"
+  return "#9B6B00"                  // muted gold/amber
 }

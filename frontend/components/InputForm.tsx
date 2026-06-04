@@ -17,17 +17,19 @@ import {
   DiscussionOption,
   GenerateRequest,
 } from "@/lib/types"
+import LeftPanel from "./LeftPanel"
 
-const GE_CATEGORIES = ["A", "B", "C", "D", "E", "F", "G"]
+const GE_CATEGORIES = ["A", "B", "C", "D", "E", "F", "G", "H"]
 
 const GE_CATEGORY_LABELS: Record<string, string> = {
-  A: "First-Year Writing",
-  B: "Scientific Inquiry",
-  C: "Arts and Letters",
-  D: "Social Analysis",
-  E: "Quantitative Reasoning",
-  F: "Foreign Language",
-  G: "Global Perspectives",
+  A: "The Arts",
+  B: "Humanistic Inquiry",
+  C: "Social Analysis",
+  D: "Life Sciences",
+  E: "Physical Sciences",
+  F: "Quantitative Reasoning",
+  G: "Global Perspectives I",
+  H: "Global Perspectives II",
 }
 
 const TIME_MIN_MINUTES = 7 * 60
@@ -65,7 +67,7 @@ interface Props {
   error: string | null
   discussionPromptCourse: string | null
   discussionOptions: DiscussionOption[]
-  onDiscussionPreference: (pref: Record<string, string>) => void
+  onDiscussionPreference: (pref: Record<string, Record<string, string>>) => void
 }
 
 let _id = 0
@@ -172,7 +174,7 @@ function useCourseOptions(code: string) {
 
 function formatSectionLabel(s: SectionOption): string {
   const days = s.days.join("/")
-  const time = `${s.start_time}–${s.end_time}`
+  const time = `${s.start_time} to ${s.end_time}`
   if (s.seats_available === 0) return `${days} ${time}`
   const seats = s.seats_available === 1 ? "1 seat" : `${s.seats_available} seats`
   return `${days} ${time}  ·  ${seats} open`
@@ -519,7 +521,7 @@ function DeptCourseSearchInput({
                 <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", fontFamily: "monospace", letterSpacing: "0.03em" }}>
                   {selectedDept}
                 </span>
-                <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>— pick a course</span>
+                <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Pick a course</span>
               </button>
               {deptCourses.length === 0
                 ? <div style={{ padding: "10px 12px", fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>
@@ -615,62 +617,6 @@ function DeptCourseSearchInput({
 
         </div>
       )}
-    </div>
-  )
-}
-
-function LeftPanel({ currentStep = 1 }: { currentStep?: number }) {
-  const steps = [
-    { num: 1, label: "Add your courses & constraints" },
-    { num: 2, label: "Build 3 optimal schedules" },
-    { num: 3, label: "Review & export" },
-  ]
-  return (
-    <div style={{
-      position: "fixed", left: 0, top: 0, bottom: 0, width: "22.222%",
-      background: "linear-gradient(170deg, #3d0000 0%, #6B0000 45%, #990000 100%)",
-      display: "flex", flexDirection: "column", padding: "40px 28px", zIndex: 10,
-    }}>
-      <div style={{ flex: 1 }}>
-        <p style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.12em", color: "rgba(255,204,0,0.75)", textTransform: "uppercase", marginBottom: 14 }}>
-          USC · Fall 2026
-        </p>
-        <h1 style={{ fontFamily: "'DM Serif Display', serif", color: "#fff", fontSize: 30, lineHeight: 1.1, marginBottom: 12 }}>
-          Trojan<br />Scheduler
-        </h1>
-        <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 12, lineHeight: 1.6, maxWidth: 160 }}>
-          Build the perfect USC schedule in seconds.
-        </p>
-      </div>
-      <div>
-        <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: "rgba(255,255,255,0.3)", textTransform: "uppercase", marginBottom: 20 }}>
-          How it works
-        </p>
-        {steps.map(({ num, label }, i) => {
-          const active = num === currentStep
-          return (
-            <div key={num} style={{
-              display: "flex", alignItems: "flex-start", gap: 12,
-              paddingTop: i > 0 ? 16 : 0, marginTop: i > 0 ? 16 : 0,
-              borderTop: i > 0 ? "1px solid rgba(255,255,255,0.08)" : "none",
-            }}>
-              <div style={{
-                width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
-                border: active ? "2px solid rgba(255,204,0,0.75)" : "2px solid rgba(255,255,255,0.2)",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                background: active ? "rgba(255,204,0,0.1)" : "transparent", marginTop: 1,
-              }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: active ? "rgba(255,204,0,0.9)" : "rgba(255,255,255,0.3)" }}>
-                  {num}
-                </span>
-              </div>
-              <span style={{ fontSize: 13, lineHeight: 1.5, paddingTop: 4, color: active ? "#fff" : "rgba(255,255,255,0.3)", fontWeight: active ? 500 : 400 }}>
-                {label}
-              </span>
-            </div>
-          )
-        })}
-      </div>
     </div>
   )
 }
@@ -796,20 +742,124 @@ export default function InputForm({
       <div style={{ display: "flex", minHeight: "100vh" }}>
         <LeftPanel currentStep={1} />
         <div style={{ marginLeft: "22.222%", width: "77.778%", minHeight: "100vh", backgroundColor: "var(--bg-page)", display: "flex", alignItems: "center", justifyContent: "center", padding: "48px" }}>
-          <div style={{ maxWidth: 480, width: "100%" }}>
-            <div style={{ textAlign: "center", marginBottom: 32 }}>
-              <div style={{ width: 48, height: 48, borderRadius: 12, backgroundColor: "rgba(153,0,0,0.08)", border: "1px solid rgba(153,0,0,0.15)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 20px" }}>
-                <span style={{ fontSize: 24 }}>🗓</span>
-              </div>
-              <h3 style={{ fontFamily: "'DM Serif Display', serif", color: "var(--text-primary)", fontSize: 22, marginBottom: 8 }}>
-                Select a Discussion Section
-              </h3>
-              <p style={{ color: "var(--text-secondary)", fontSize: 14, lineHeight: 1.6 }}>
-                <span style={{ fontWeight: 600, color: "var(--cardinal)" }}>{discussionPromptCourse}</span>{" "}
-                has multiple discussion sections. Choose the time that works best for you.
+          <div style={{ maxWidth: 520, width: "100%" }}>
+            {/* Header — surfaces the system-selected lecturer so the link
+                between "discussion options shown" and "lecturer chosen" is
+                explicit. Falls back to a generic header if no options yet. */}
+            <div style={{ textAlign: "center", marginBottom: 28 }}>
+              <p
+                style={{
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  letterSpacing: "0.18em",
+                  textTransform: "uppercase",
+                  color: "var(--cardinal)",
+                  marginBottom: 14,
+                }}
+              >
+                Step 02 / Discussion
               </p>
+              <h3 style={{ fontFamily: "'DM Serif Display', serif", color: "var(--text-primary)", fontSize: 32, marginBottom: 12, letterSpacing: "-0.01em", lineHeight: 1.05 }}>
+                Pick a discussion time.
+              </h3>
+              {discussionOptions.length > 0 ? (
+                <>
+                  <p style={{ color: "var(--text-secondary)", fontSize: 14, lineHeight: 1.6, marginBottom: 14 }}>
+                    We selected{" "}
+                    <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>
+                      {discussionOptions[0].lecture_professor}
+                    </span>
+                    {" "}for{" "}
+                    <span style={{ fontWeight: 600, color: "var(--cardinal)" }}>{discussionPromptCourse}</span>
+                    . All discussion options below pair with their lecture.
+                  </p>
+                  <div
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "6px 12px",
+                      borderRadius: 999,
+                      background: "rgba(153,0,0,0.06)",
+                      border: "1px solid rgba(153,0,0,0.15)",
+                      color: "var(--cardinal)",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      letterSpacing: "0.02em",
+                    }}
+                  >
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--cardinal)" }} />
+                    Lecture · {discussionOptions[0].lecture_days.join(" / ")} · {formatTime(discussionOptions[0].lecture_start_time)} to {formatTime(discussionOptions[0].lecture_end_time)}
+                  </div>
+                </>
+              ) : (
+                <p style={{ color: "var(--text-secondary)", fontSize: 14, lineHeight: 1.6 }}>
+                  <span style={{ fontWeight: 600, color: "var(--cardinal)" }}>{discussionPromptCourse}</span>
+                  {" "}has multiple discussion sections.
+                </p>
+              )}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+
+              {/* "No preference" — auto-pick, surfaced FIRST as the recommended path. */}
+              <button
+                type="button"
+                onClick={() => onDiscussionPreference({ [discussionPromptCourse]: {} })}
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "14px 16px",
+                  borderRadius: 12,
+                  border: "1.5px solid var(--cardinal)",
+                  background: "rgba(153,0,0,0.04)",
+                  color: "var(--text-primary)",
+                  cursor: "pointer",
+                  transition: "background 0.15s, transform 0.1s",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "rgba(153,0,0,0.08)"
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "rgba(153,0,0,0.04)"
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                  <span style={{ fontWeight: 600, fontSize: 14, color: "var(--cardinal)" }}>
+                    No preference, let the program pick
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      letterSpacing: "0.12em",
+                      textTransform: "uppercase",
+                      color: "var(--cardinal)",
+                      background: "#ffffff",
+                      border: "1px solid rgba(153,0,0,0.25)",
+                      padding: "3px 7px",
+                      borderRadius: 4,
+                    }}
+                  >
+                    Recommended
+                  </span>
+                </div>
+                <p style={{ fontSize: 12, marginTop: 6, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+                  Show the three highest-scoring schedules across all lecturers and discussion times.
+                </p>
+              </button>
+
+              {/* Subtle divider between auto and manual options */}
+              {discussionOptions.length > 0 && (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0 4px" }}>
+                  <div style={{ flex: 1, height: 1, background: "var(--border-subtle)" }} />
+                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" }}>
+                    Or pick manually
+                  </span>
+                  <div style={{ flex: 1, height: 1, background: "var(--border-subtle)" }} />
+                </div>
+              )}
+
               {discussionOptions.map((opt) => {
                 const isFull = opt.seats_available === 0
                 const pctRemaining = opt.total_seats > 0 ? opt.seats_available / opt.total_seats : 0
@@ -824,26 +874,31 @@ export default function InputForm({
                   : "var(--border-default)"
                 return (
                   <button
-                    key={opt.section_id}
-                    onClick={() => onDiscussionPreference({ [discussionPromptCourse]: opt.section_id })}
+                    key={`${opt.lecture_section_id}-${opt.section_id}`}
+                    onClick={() =>
+                      onDiscussionPreference({
+                        [discussionPromptCourse]: { discussion: opt.section_id },
+                      })
+                    }
                     style={{ width: "100%", textAlign: "left", padding: "12px 16px", borderRadius: 12, border: `1.5px solid ${borderColor}`, backgroundColor: bgColor, color: "var(--text-primary)", cursor: "pointer", transition: "border-color 0.15s" }}
                     onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--cardinal)" }}
                     onMouseLeave={(e) => { e.currentTarget.style.borderColor = borderColor }}
                   >
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                       <span style={{ fontWeight: 500, fontSize: 14 }}>
-                        {opt.days.join(" / ")} · {formatTime(opt.start_time)} – {formatTime(opt.end_time)}
+                        {opt.days.join(" / ")} · {formatTime(opt.start_time)} to {formatTime(opt.end_time)}
                       </span>
                       <span style={{ fontSize: 12, fontWeight: 600, flexShrink: 0, color: isFull ? "var(--cardinal)" : pctRemaining < 0.3 ? "var(--cardinal)" : "var(--text-tertiary)" }}>
                         {isFull ? "Full" : `${opt.seats_available} / ${opt.total_seats}`}
                       </span>
                     </div>
                     {opt.location && (
-                      <p style={{ fontSize: 12, marginTop: 2, color: "var(--text-tertiary)" }}>{opt.location}</p>
+                      <p style={{ fontSize: 11, marginTop: 4, color: "var(--text-tertiary)" }}>{opt.location}</p>
                     )}
                   </button>
                 )
               })}
+
               {discussionOptions.length === 0 && (
                 <p style={{ textAlign: "center", padding: "24px 0", fontSize: 14, color: "var(--text-tertiary)" }}>
                   No discussion options available.
@@ -870,21 +925,10 @@ export default function InputForm({
 
           {/* Planning Mode — global mode switch, top right */}
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginBottom: 20 }}>
-            <div className="relative group flex items-center gap-2">
+            <div className="flex items-center gap-2">
               <span style={{ fontSize: 11, color: planningMode ? "var(--cardinal)" : "var(--text-tertiary)", transition: "color 0.2s", userSelect: "none" as const }}>
                 Planning Mode
               </span>
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ color: "var(--text-tertiary)", flexShrink: 0 }}>
-                <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
-                <path d="M8 7v5M8 5.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-              {/* Ghost tooltip — transparent bg, grey text */}
-              <div
-                className="absolute opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150"
-                style={{ top: "calc(100% + 6px)", right: 0, width: 250, background: "transparent", border: "none", padding: "4px 0", fontSize: 11, lineHeight: 1.6, color: "rgba(255,255,255,0.40)", zIndex: 50, textAlign: "right" as const }}
-              >
-                Includes sections at capacity in your results. Enrollment fluctuates throughout registration — waitlisting a full section is often a viable path.
-              </div>
               <button
                 type="button"
                 onClick={() => setPlanningMode((v) => !v)}
@@ -895,6 +939,25 @@ export default function InputForm({
                   <div className="toggle-thumb" style={{ transform: planningMode ? "translateX(18px)" : "translateX(0)" }} />
                 </div>
               </button>
+              <div className="relative group" style={{ display: "flex", alignItems: "center" }}>
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ color: "var(--text-tertiary)", flexShrink: 0, cursor: "help" }}>
+                  <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
+                  <path d="M8 7v5M8 5.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+                {/* Polished card tooltip */}
+                <div
+                  className="absolute opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150"
+                  style={{ top: "calc(100% + 8px)", right: 0, width: 260, background: "#FFFFFF", border: "1px solid var(--border-default)", borderRadius: 10, padding: "14px 16px", boxShadow: "0 4px 16px rgba(0,0,0,0.08)", zIndex: 50, textAlign: "left" as const }}
+                >
+                  <div style={{ position: "absolute", top: -5, right: 4, width: 10, height: 10, background: "#FFFFFF", borderTop: "1px solid var(--border-default)", borderLeft: "1px solid var(--border-default)", transform: "rotate(45deg)" }} />
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>
+                    Planning Mode
+                  </div>
+                  <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, color: "var(--text-secondary)" }}>
+                    Includes sections at capacity in your results. Enrollment fluctuates throughout registration; waitlisting a full section is often a viable path.
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
 

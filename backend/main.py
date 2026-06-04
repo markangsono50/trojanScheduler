@@ -36,8 +36,8 @@ class GenerateRequest(BaseModel):
     prof_slider: float = 0.5
     convenience_slider: float = 0.5
     planning_mode: bool = False
-    discussion_preferences: dict[str, str] | None = None          # legacy: course_code -> section_id
-    linked_section_preferences: dict[str, dict[str, str]] | None = None  # course_code -> type -> section_id
+    # course_code → {"lecture_section_id": ..., "discussion": ..., "lab": ..., "quiz": ...}
+    linked_section_preferences: dict[str, dict[str, str]] | None = None
 
 
 # --- Smart query parser ---
@@ -155,14 +155,9 @@ async def generate(req: GenerateRequest):
 
     clear_dept_cache()
 
-    # Merge legacy discussion_preferences into linked_section_preferences
-    merged_linked_prefs: dict[str, dict[str, str]] = {}
-    if req.linked_section_preferences:
-        for code, prefs in req.linked_section_preferences.items():
-            merged_linked_prefs[code] = dict(prefs)
-    if req.discussion_preferences:
-        for code, sid in req.discussion_preferences.items():
-            merged_linked_prefs.setdefault(code, {})["discussion"] = sid
+    linked_prefs: dict[str, dict[str, str]] = {
+        code: dict(prefs) for code, prefs in (req.linked_section_preferences or {}).items()
+    }
 
     # 1. Scrape sections for all course inputs in parallel (deduplicated by resolved code)
     codes = list({
@@ -232,7 +227,7 @@ async def generate(req: GenerateRequest):
             code=code,
             professor=professor,
             section_id=section_id,
-            preferred_linked_section_ids=merged_linked_prefs.get(code or "") or None,
+            preferred_linked_section_ids=linked_prefs.get(code or ""),
         ))
 
     ge_inputs = [

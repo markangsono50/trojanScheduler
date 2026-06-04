@@ -118,6 +118,22 @@ class SectionPair:
 
 
 @dataclass
+class BundleOption:
+    """
+    Per-lecture grouping of linked-section options for the user-facing
+    'choose your discussion/lab/quiz time' prompt. Every entry in
+    options_by_type comes from the same parent lecture, so picking
+    across types within one bundle is guaranteed compatible (same prof).
+    """
+    lecture_section_id: str
+    professor: str
+    lecture_days: list[str]
+    lecture_start_time: str
+    lecture_end_time: str
+    options_by_type: dict[str, list[LinkedSection]] = field(default_factory=dict)
+
+
+@dataclass
 class CourseInput:
     """
     One entry from the user's must-have or nice-to-have list.
@@ -131,7 +147,8 @@ class CourseInput:
     categories: Optional[list[str]] = None # e.g. ["C","D"] — for multi-GE mode
 
     ge_code: Optional[str] = None                    # specific course within a GE category
-    preferred_linked_section_ids: Optional[dict] = None  # section_type → section_id
+    # Shape: {"lecture_section_id": "...", "discussion": "...", "lab": "...", "quiz": "..."}
+    preferred_linked_section_ids: Optional[dict] = None
 
 
 @dataclass
@@ -236,17 +253,6 @@ def _no_day_off_conflict(days: list[str], constraints: Constraints) -> bool:
     return not any(d in constraints.days_off for d in days)
 
 
-def _discussion_time_bucket(linked: LinkedSection) -> str:
-    """Classify a discussion section into morning / afternoon / evening."""
-    start = _to_minutes(linked.start_time)
-    if start < _to_minutes("12:00"):
-        return "morning"
-    elif start < _to_minutes("17:00"):
-        return "afternoon"
-    else:
-        return "evening"
-
-
 def filter_and_pin_sections(
     sections: list[Section],
     course_input: CourseInput,
@@ -278,33 +284,36 @@ def filter_and_pin_sections(
         if not result:
             return [], f"No open sections found for {label}."
 
-    # 2. Modality
-    result = [s for s in result if _modality_ok(s, constraints)]
-    if not result:
-        return [], (
-            f"No {constraints.modality.replace('_', ' ')} sections available "
-            f"for {label}."
-        )
+    # 2. Modality (skipped in planning mode)
+    if not planning_mode:
+        result = [s for s in result if _modality_ok(s, constraints)]
+        if not result:
+            return [], (
+                f"No {constraints.modality.replace('_', ' ')} sections available "
+                f"for {label}."
+            )
 
-    # 3. Time window
-    result = [s for s in result if _section_in_time_window(s, constraints)]
-    if not result:
-        return [], (
-            f"No sections of {label} fall within your "
-            f"{constraints.earliest_start}–{constraints.latest_end} time window."
-        )
+    # 3. Time window (skipped in planning mode)
+    if not planning_mode:
+        result = [s for s in result if _section_in_time_window(s, constraints)]
+        if not result:
+            return [], (
+                f"No sections of {label} fall within your "
+                f"{constraints.earliest_start}–{constraints.latest_end} time window."
+            )
 
-    # 4. Days off
-    result = [
-        s for s in result
-        if _no_day_off_conflict(s.days, constraints)
-    ]
-    if not result:
-        days_off_str = ", ".join(constraints.days_off)
-        return [], (
-            f"All open sections of {label} meet on your "
-            f"requested day(s) off ({days_off_str})."
-        )
+    # 4. Days off (skipped in planning mode)
+    if not planning_mode:
+        result = [
+            s for s in result
+            if _no_day_off_conflict(s.days, constraints)
+        ]
+        if not result:
+            days_off_str = ", ".join(constraints.days_off)
+            return [], (
+                f"All open sections of {label} meet on your "
+                f"requested day(s) off ({days_off_str})."
+            )
 
     # 5. Professor pin
     if course_input.professor:
@@ -339,32 +348,50 @@ def filter_and_pin_sections(
 def expand_to_pairs(
     sections: list[Section],
     constraints: Constraints,
-    preferred_linked_section_ids: Optional[dict[str, str]] = None,
+    preferred_linked_section_ids: Optional[dict] = None,
     planning_mode: bool = False,
-) -> tuple[list[SectionPair], bool, dict[str, list]]:
+) -> tuple[list[SectionPair], bool, list[BundleOption]]:
     """
     Expand lecture sections into SectionPairs, where each pair bundles one
     lecture with one required linked section per type (e.g. one discussion
     AND one lab). Uses cartesian product across type groups so every valid
     (lecture × discussion × lab × ...) combination is represented.
 
+    Bundle grouping:
+    - Each lecture produces one BundleOption containing its own linked-section
+      time options grouped by type. This preserves same-professor compatibility:
+      picking across types within one bundle is guaranteed to share a lecture.
+
     Prompt logic:
-    - Course has lab or quiz → prompt for every type with 2+ distinct time slots
-      (including discussion) that hasn't already been pinned via preferred_linked_section_ids.
-    - Course is discussion-only (no lab/quiz) → no prompt; solver enumerates all
-      discussion options and picks best fit via scoring.
+    - Fires when there are 2+ schedulable bundles (multiple professor choices),
+      OR any single required type within a bundle has 2+ distinct time slots
+      (covers single-professor courses with multiple discussion times).
+
+    preferred_linked_section_ids shape (when set):
+      {"lecture_section_id": "...", "discussion": "...", "lab": "...", "quiz": "..."}
+      Lectures not matching lecture_section_id are skipped entirely.
 
     Returns:
-      (pairs, needs_prompt, display_options_by_type)
-      display_options_by_type: dict mapping section_type → list of LinkedSection options
+      (pairs, needs_prompt, bundle_options)
     """
     pairs: list[SectionPair] = []
-    needs_prompt = False
-    display_options: dict[str, list] = {}
+    bundles: list[BundleOption] = []
+
+    pinned_lecture_id = (
+        preferred_linked_section_ids.get("lecture_section_id")
+        if preferred_linked_section_ids else None
+    )
 
     for section in sections:
         if not section.linked_sections:
+            # Lecture-only — but still skip if the user pinned a different lecture
+            if pinned_lecture_id and section.section_id != pinned_lecture_id:
+                continue
             pairs.append(SectionPair(lecture=section))
+            continue
+
+        # If user pinned a specific lecture, skip all others entirely
+        if pinned_lecture_id and section.section_id != pinned_lecture_id:
             continue
 
         # Group by normalized type (e.g. "Discussion" → "discussion")
@@ -372,15 +399,20 @@ def expand_to_pairs(
         for ls in section.linked_sections:
             by_type.setdefault(ls.section_type.lower(), []).append(ls)
 
-        # Filter each type by time window + days off (keep full sections for display)
-        display_by_type: dict[str, list[LinkedSection]] = {
-            stype: [
-                ls for ls in group
-                if _linked_in_time_window(ls, constraints)
-                and _no_day_off_conflict(ls.days, constraints)
-            ]
-            for stype, group in by_type.items()
-        }
+        # Filter each type by time window + days off (skipped in planning mode)
+        if planning_mode:
+            display_by_type: dict[str, list[LinkedSection]] = {
+                stype: list(group) for stype, group in by_type.items()
+            }
+        else:
+            display_by_type = {
+                stype: [
+                    ls for ls in group
+                    if _linked_in_time_window(ls, constraints)
+                    and _no_day_off_conflict(ls.days, constraints)
+                ]
+                for stype, group in by_type.items()
+            }
 
         # Eligible = filtered + has seats (seat filter skipped in planning mode)
         eligible_by_type: dict[str, list[LinkedSection]] = {
@@ -392,7 +424,7 @@ def expand_to_pairs(
         if any(len(g) == 0 for g in eligible_by_type.values()):
             continue
 
-        # Apply preferred_linked_section_ids to pin each type to a specific section
+        # Apply per-type pin within the chosen bundle
         if preferred_linked_section_ids:
             for stype in list(eligible_by_type.keys()):
                 chosen_id = preferred_linked_section_ids.get(stype)
@@ -401,32 +433,55 @@ def expand_to_pairs(
                     if pinned:
                         eligible_by_type[stype] = pinned
 
-        # Prompt fires only when course has lab or quiz (not discussion-only).
-        # For each such unpinned type with 2+ distinct time slots, ask the user to pick.
-        has_other_types = any(t != "discussion" for t in by_type.keys())
-        if has_other_types:
-            for stype, eligible in eligible_by_type.items():
-                if preferred_linked_section_ids and stype in preferred_linked_section_ids:
-                    continue
-                distinct_slots = {(tuple(ls.days), ls.start_time) for ls in eligible}
-                if len(distinct_slots) >= 2:
-                    needs_prompt = True
-                    seen_ids = {ls.section_id for ls in display_options.get(stype, [])}
-                    for ls in display_by_type.get(stype, []):
-                        if ls.section_id not in seen_ids:
-                            display_options.setdefault(stype, []).append(ls)
-                            seen_ids.add(ls.section_id)
+        # Record this lecture as a bundle option (using display lists so the
+        # user sees all times, including full sections when not in planning mode)
+        bundles.append(BundleOption(
+            lecture_section_id=section.section_id,
+            professor=section.professor,
+            lecture_days=list(section.days),
+            lecture_start_time=section.start_time,
+            lecture_end_time=section.end_time,
+            options_by_type={
+                stype: list(display_by_type.get(stype, []))
+                for stype in eligible_by_type.keys()
+            },
+        ))
 
         # Cartesian product across all type groups → one SectionPair per combo
         type_groups = list(eligible_by_type.values())
         for combo in _cart_product(*type_groups):
             pairs.append(SectionPair(lecture=section, linked_sections=list(combo)))
 
-    return pairs, needs_prompt, display_options
+    # Prompt trigger: multiple bundles to choose between, OR any type within
+    # a bundle has 2+ distinct time slots. Suppress if the user has already
+    # pinned a lecture AND every type in the chosen bundle.
+    needs_prompt = False
+    if not pinned_lecture_id:
+        if len(bundles) >= 2:
+            needs_prompt = True
+        else:
+            for bundle in bundles:
+                for stype, options in bundle.options_by_type.items():
+                    distinct = {(tuple(ls.days), ls.start_time) for ls in options}
+                    if len(distinct) >= 2:
+                        needs_prompt = True
+                        break
+                if needs_prompt:
+                    break
+    elif preferred_linked_section_ids:
+        # Lecture is pinned; check whether every required type also has a pin
+        chosen_bundles = [b for b in bundles if b.lecture_section_id == pinned_lecture_id]
+        for bundle in chosen_bundles:
+            for stype in bundle.options_by_type.keys():
+                if not preferred_linked_section_ids.get(stype):
+                    needs_prompt = True
+                    break
+
+    return pairs, needs_prompt, bundles
 
 
 def needs_linked_section_prompt(sections: list[Section], constraints: Constraints) -> bool:
-    """Returns True if any type for a course-with-lab/quiz has 2+ eligible time slots."""
+    """Returns True if the user must be prompted to pick linked-section times."""
     _, prompt, _ = expand_to_pairs(sections, constraints, preferred_linked_section_ids=None)
     return prompt
 
@@ -511,7 +566,7 @@ class SolverResult:
         self.combinations: list[list[SectionPair]] = []
         self.errors: list[str] = []
         self.conflict_pairs: list[tuple[str, str]] = []
-        self.linked_section_options: dict[str, dict[str, list]] = {}  # course_code → type → options
+        self.linked_section_options: dict[str, list[BundleOption]] = {}  # course_code → bundles
         self.needs_linked_section_prompt: Optional[str] = None  # course_code
 
 
@@ -554,33 +609,53 @@ def _diagnose_over_constrained(
     a human-readable message.
     """
     # Check seats (skipped in planning mode)
-    if not planning_mode:
+    if planning_mode:
+        open_sections = list(sections)
+    else:
         open_sections = [s for s in sections if s.seats_available > 0]
         if not open_sections:
             return f"All sections of {course_code} are currently full."
 
-    # Check modality
-    modality_ok = [s for s in open_sections if s.modality == constraints.modality
-                   or constraints.modality == "no_preference"]
-    if not modality_ok:
-        return (
-            f"No {constraints.modality.replace('_', ' ')} sections of "
-            f"{course_code} are open this term."
-        )
+    # Check modality (skipped in planning mode)
+    if planning_mode:
+        modality_ok = list(open_sections)
+    else:
+        modality_ok = [s for s in open_sections if s.modality == constraints.modality
+                       or constraints.modality == "no_preference"]
+        if not modality_ok:
+            return (
+                f"No {constraints.modality.replace('_', ' ')} sections of "
+                f"{course_code} are open this term."
+            )
 
-    # Check time window
-    time_ok = [s for s in modality_ok if _section_in_time_window(s, constraints)]
-    if not time_ok:
-        return (
-            f"No open sections of {course_code} fit within your "
-            f"{constraints.earliest_start}–{constraints.latest_end} window."
-        )
+    # Check time window (skipped in planning mode)
+    if planning_mode:
+        time_ok = list(modality_ok)
+    else:
+        time_ok = [s for s in modality_ok if _section_in_time_window(s, constraints)]
+        if not time_ok:
+            return (
+                f"No open sections of {course_code} fit within your "
+                f"{constraints.earliest_start}–{constraints.latest_end} window."
+            )
 
-    # Check days off
-    days_off_str = ", ".join(constraints.days_off)
+    # Check days off — only blame days_off if the user actually set any (skipped in planning mode)
+    if not planning_mode and constraints.days_off:
+        days_off_ok = [s for s in time_ok if _no_day_off_conflict(s.days, constraints)]
+        if not days_off_ok:
+            days_off_str = ", ".join(constraints.days_off)
+            return (
+                f"All open sections of {course_code} meet on your "
+                f"requested day(s) off ({days_off_str})."
+            )
+
+    # Lectures passed every filter — the failure must be in linked sections
+    # (discussions/labs/quizzes) not fitting the time window or days off.
     return (
-        f"All open sections of {course_code} meet on your day(s) off "
-        f"({days_off_str})."
+        f"{course_code} has open lecture sections, but no required discussion, "
+        f"lab, or quiz fits your time window"
+        f"{' or days off' if constraints.days_off else ''}. "
+        f"Try widening the time window."
     )
 
 
@@ -669,7 +744,7 @@ def resolve_must_haves(
                      .errors for immediate hard failures,
                      .conflict_pairs for deadlock diagnosis
     """
-    buffer_mins = 10 if constraints.no_back_to_back else 0
+    buffer_mins = 0 if planning_mode else (10 if constraints.no_back_to_back else 0)
     result = SolverResult()
     groups: list[list[SectionPair]] = []
 
@@ -698,8 +773,30 @@ def resolve_must_haves(
             result.errors.append(msg)
             continue
 
-        # If a linked section prompt is needed, return early so the frontend can ask
-        if needs_prompt and not course_input.preferred_linked_section_ids:
+        # Prompt strategy:
+        # - First round (no discussion pick yet): auto-pick the top bundle by
+        #   lecture RMP and prompt the user to choose ONLY among that
+        #   professor's discussion times. This is the "if the program selected
+        #   Lars Perner, the discussion should be led by Lars too" rule.
+        # - Second round (user has picked a discussion): override the prompt
+        #   trigger and let the backtracker explore all bundles. The bundle
+        #   containing the user's discussion is naturally restricted to that
+        #   one pair; other bundles contribute alternative schedules so the
+        #   top-3 ends up with diverse lecturers.
+        # A user "decision" is anything other than None — either a specific
+        # discussion pin {"discussion": "..."} or an explicit "no preference"
+        # signal (an empty dict {}). Both should suppress the prompt; only the
+        # discussion pin triggers the rank-1 promotion downstream.
+        has_user_decision = course_input.preferred_linked_section_ids is not None
+        if needs_prompt and not has_user_decision:
+            if len(options) > 1:
+                section_by_id = {s.section_id: s for s in filtered}
+
+                def _bundle_rmp(b: BundleOption) -> float:
+                    sec = section_by_id.get(b.lecture_section_id)
+                    return sec.rmp_score if sec else 0.0
+
+                options = [max(options, key=_bundle_rmp)]
             result.needs_linked_section_prompt = course_code
             result.linked_section_options[course_code] = options
             continue
@@ -758,7 +855,7 @@ def auto_select_ge(
       (selected_pair, runner_ups, error_message)
       error_message is None if selection succeeded.
     """
-    buffer_mins = 10 if constraints.no_back_to_back else 0
+    buffer_mins = 0 if planning_mode else (10 if constraints.no_back_to_back else 0)
 
     # Narrow by specific course code within the GE category
     if ge_input.ge_code:
@@ -832,7 +929,7 @@ def inject_nice_to_haves(
     Respects max_units cap and conflict constraints.
     Silently skips if nothing fits — nice-to-haves are best-effort.
     """
-    buffer_mins = 10 if constraints.no_back_to_back else 0
+    buffer_mins = 0 if planning_mode else (10 if constraints.no_back_to_back else 0)
     schedule = list(combination)
     current_units = sum(p.lecture.units for p in schedule)
 
@@ -1001,9 +1098,64 @@ def _seat_color_gradient(pair: SectionPair) -> str:
 # 8. COMPOSITE SCORE
 # ---------------------------------------------------------------------------
 
+PLANNING_VIOLATION_PENALTY = 5.0
+
+
+def _count_planning_violations(
+    schedule: list[SectionPair],
+    constraints: Constraints,
+) -> int:
+    """
+    Count soft-preference violations across the schedule. Used only when
+    planning_mode bypasses the pre-filters so violating schedules can still
+    surface — but should rank lower than preference-matching ones.
+
+    One violation per pair per dimension (time/days/modality) plus one per
+    sub-buffer adjacency when no_back_to_back is set.
+    """
+    if not schedule:
+        return 0
+    violations = 0
+    for pair in schedule:
+        if not _modality_ok(pair.lecture, constraints):
+            violations += 1
+        time_bad = not _section_in_time_window(pair.lecture, constraints) or any(
+            not _linked_in_time_window(ls, constraints) for ls in pair.linked_sections
+        )
+        if time_bad:
+            violations += 1
+        days_bad = not _no_day_off_conflict(pair.lecture.days, constraints) or any(
+            not _no_day_off_conflict(ls.days, constraints) for ls in pair.linked_sections
+        )
+        if days_bad:
+            violations += 1
+
+    if constraints.no_back_to_back:
+        per_day: dict[str, list[tuple[int, int]]] = {}
+        for pair in schedule:
+            for day in pair.lecture.days:
+                per_day.setdefault(day, []).append(
+                    (_to_minutes(pair.lecture.start_time), _to_minutes(pair.lecture.end_time))
+                )
+            for ls in pair.linked_sections:
+                for day in ls.days:
+                    per_day.setdefault(day, []).append(
+                        (_to_minutes(ls.start_time), _to_minutes(ls.end_time))
+                    )
+        for blocks in per_day.values():
+            ordered = sorted(blocks, key=lambda b: b[0])
+            for i in range(len(ordered) - 1):
+                gap = ordered[i + 1][0] - ordered[i][1]
+                if 0 <= gap < 10:
+                    violations += 1
+    return violations
+
+
 def score_schedule(
     schedule: list[SectionPair],
     weights: ScoringWeights,
+    constraints: Optional[Constraints] = None,
+    planning_mode: bool = False,
 ) -> float:
     """
     Composite schedule score 0–100.
@@ -1016,11 +1168,16 @@ def score_schedule(
       compactness — fewer days on campus is better
       gap         — less dead time between classes is better
       seat_buffer — more open seats is better (risk management)
+
+    In planning_mode the seat component is neutralized (seats are meaningless
+    when planning ahead of registration) and each soft-preference violation
+    subtracts PLANNING_VIOLATION_PENALTY points from the final score so that
+    preference-matching schedules still rank highest.
     """
     rmp = _score_rmp(schedule)
     compactness = _score_compactness(schedule)
     gap = _score_gaps(schedule)
-    seats = _score_seats(schedule)
+    seats = 1.0 if planning_mode else _score_seats(schedule)
 
     raw = (
         rmp         * weights.rmp +
@@ -1029,7 +1186,10 @@ def score_schedule(
         seats       * weights.seat_buffer
     )
 
-    return round(raw * 100, 1)
+    final = raw * 100
+    if planning_mode and constraints is not None:
+        final -= PLANNING_VIOLATION_PENALTY * _count_planning_violations(schedule, constraints)
+    return round(max(0.0, final), 1)
 
 
 # ---------------------------------------------------------------------------
@@ -1194,31 +1354,59 @@ def _deduplicate(
     top_n: int,
 ) -> list[tuple[float, list[SectionPair]]]:
     """
-    Remove near-duplicate schedules.
-    Two schedules are considered duplicates if they share the exact same
-    set of section IDs (lecture + linked).
-    Returns top_n unique schedules sorted by score descending.
+    Deduplicate by LECTURE combination. Schedules that share the same set
+    of lecture section IDs (same professors, same lecture days/times) are
+    treated as duplicates even if their linked sections (discussion / lab /
+    quiz) differ — to the user, those are variations of "the same schedule"
+    and shouldn't fill multiple slots in the top-N.
+
+    For each unique lecture combination we keep the highest-scoring variant.
+    Falls back to discussion-variant fills only if there aren't enough
+    distinct lecture combinations to reach top_n.
     """
-    seen: set[frozenset] = set()
-    unique: list[tuple[float, list[SectionPair]]] = []
+    best_per_lectures: dict[frozenset, tuple[float, list[SectionPair]]] = {}
+    for score, schedule in scored:
+        lec_key = frozenset(p.lecture.section_id for p in schedule)
+        prev = best_per_lectures.get(lec_key)
+        if prev is None or score > prev[0]:
+            best_per_lectures[lec_key] = (score, schedule)
 
+    primary = sorted(
+        best_per_lectures.values(),
+        key=lambda x: x[0],
+        reverse=True,
+    )
+
+    if len(primary) >= top_n:
+        return primary[:top_n]
+
+    # Fallback: not enough distinct lecture combos. Fill remaining slots with
+    # next-best discussion variants, deduped on the full section ID set so
+    # we never emit the exact same schedule twice.
+    seen_full: set[frozenset] = {
+        frozenset(
+            sid
+            for pair in sched
+            for sid in [pair.lecture.section_id]
+            + [ls.section_id for ls in pair.linked_sections]
+        )
+        for _score, sched in primary
+    }
+    result = list(primary)
     for score, schedule in sorted(scored, key=lambda x: x[0], reverse=True):
-        # Build key from all section IDs in this schedule
-        ids: set[str] = set()
-        for pair in schedule:
-            ids.add(pair.lecture.section_id)
-            for ls in pair.linked_sections:
-                ids.add(ls.section_id)
-        key = frozenset(ids)
-
-        if key not in seen:
-            seen.add(key)
-            unique.append((score, schedule))
-
-        if len(unique) >= top_n:
+        full_key = frozenset(
+            sid
+            for pair in schedule
+            for sid in [pair.lecture.section_id]
+            + [ls.section_id for ls in pair.linked_sections]
+        )
+        if full_key in seen_full:
+            continue
+        seen_full.add(full_key)
+        result.append((score, schedule))
+        if len(result) >= top_n:
             break
-
-    return unique
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1277,38 +1465,67 @@ def build_schedules(
     weights = ScoringWeights.from_sliders(prof_slider, convenience_slider)
 
     # --- Step 2: Resolve must-haves ---
-    solver_result: SolverResult = resolve_must_haves(
-        must_have_inputs,
-        all_sections,
-        constraints,
-        rmp_cap,
-        max_combinations,
-        planning_mode=planning_mode,
-    )
+    # If the top rmp_cap sections deadlock against each other, widen the pool
+    # and retry once or twice. Only retries on backtracking deadlocks
+    # (conflict_pairs populated), not on individual-course hard failures.
+    retry_caps = [rmp_cap]
+    if rmp_cap < 25:
+        retry_caps.append(25)
+    retry_caps.append(10_000)  # effectively unlimited
+
+    solver_result: SolverResult = SolverResult()
+    for try_cap in retry_caps:
+        solver_result = resolve_must_haves(
+            must_have_inputs,
+            all_sections,
+            constraints,
+            try_cap,
+            max_combinations,
+            planning_mode=planning_mode,
+        )
+        if solver_result.needs_linked_section_prompt:
+            break
+        if solver_result.combinations:
+            break
+        if not solver_result.conflict_pairs:
+            # Non-deadlock failure (pinned section missing, etc.) — retry won't help
+            break
 
     # Handle linked section prompt needed (lab/quiz/discussion courses)
     if solver_result.needs_linked_section_prompt:
         course_code = solver_result.needs_linked_section_prompt
-        raw_options = solver_result.linked_section_options.get(course_code, {})
-        options_by_type: dict[str, list] = {}
-        for stype, linked_list in raw_options.items():
-            options_by_type[stype] = [
-                {
-                    "section_id": ls.section_id,
-                    "days": ls.days,
-                    "start_time": ls.start_time,
-                    "end_time": ls.end_time,
-                    "seats_available": ls.seats_available,
-                    "total_seats": ls.total_seats,
-                    "location": ls.location,
-                }
-                for ls in linked_list
-            ]
+        bundles = solver_result.linked_section_options.get(course_code, [])
+        serialized_bundles = [
+            {
+                "lecture_section_id": b.lecture_section_id,
+                "professor": b.professor,
+                "lecture_days": b.lecture_days,
+                "lecture_start_time": b.lecture_start_time,
+                "lecture_end_time": b.lecture_end_time,
+                "options_by_type": {
+                    stype: [
+                        {
+                            "section_id": ls.section_id,
+                            "section_type": ls.section_type,
+                            "days": ls.days,
+                            "start_time": ls.start_time,
+                            "end_time": ls.end_time,
+                            "seats_available": ls.seats_available,
+                            "total_seats": ls.total_seats,
+                            "location": ls.location,
+                        }
+                        for ls in linked_list
+                    ]
+                    for stype, linked_list in b.options_by_type.items()
+                },
+            }
+            for b in bundles
+        ]
         return {
             "schedules": [],
             "error": None,
             "needs_linked_section_prompt": course_code,
-            "linked_section_options": options_by_type,
+            "linked_section_options": {course_code: serialized_bundles},
         }
 
     # Handle hard errors
@@ -1392,7 +1609,7 @@ def build_schedules(
             continue
 
         # Score
-        final_score = score_schedule(schedule, weights)
+        final_score = score_schedule(schedule, weights, constraints, planning_mode)
         scored.append((final_score, schedule))
 
         # Early exit — we have more than enough to pick top N from
@@ -1412,6 +1629,40 @@ def build_schedules(
         }
 
     top = _deduplicate(scored, top_n)
+
+    # --- Step 4b: Promote any user-pinned discussion to the top ---
+    # If the user explicitly picked a discussion via the linked-section prompt,
+    # the schedule containing that discussion should always surface — otherwise
+    # the prompt feature feels broken when their choice gets out-scored by
+    # other lecturers' bundles.
+    pinned_disc_ids: set[str] = set()
+    for ci in must_have_inputs:
+        pref = ci.preferred_linked_section_ids
+        if pref and pref.get("discussion"):
+            pinned_disc_ids.add(pref["discussion"])
+
+    if pinned_disc_ids and top:
+        def _has_pinned(sched: list[SectionPair]) -> bool:
+            return any(
+                ls.section_id in pinned_disc_ids
+                for pair in sched
+                for ls in pair.linked_sections
+            )
+
+        pinned_idx = next(
+            (i for i, (_s, sch) in enumerate(top) if _has_pinned(sch)),
+            None,
+        )
+        if pinned_idx is None:
+            # Pinned schedule didn't make the top — pull the best-scoring
+            # pinned candidate from the full scored list and force rank 1.
+            pinned_candidates = [(s, sch) for s, sch in scored if _has_pinned(sch)]
+            if pinned_candidates:
+                best_pinned = max(pinned_candidates, key=lambda x: x[0])
+                top = [best_pinned] + top[: max(0, top_n - 1)]
+        elif pinned_idx > 0:
+            # In the top but not first — bubble it up to rank 1.
+            top = [top[pinned_idx]] + [t for i, t in enumerate(top) if i != pinned_idx]
 
     # --- Step 5: Serialize into API response format ---
     schedules = []

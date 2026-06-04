@@ -1,12 +1,11 @@
-// Stage 4: post-selection detail view
-// Course list with RMP badges, difficulty, days/times, GE badges, double-count badge
-// GE swap panel: runner-up options with client-side conflict check
-// Export to Google Calendar (.ics download) + Start Over button
+// Stage 4: post-selection detail view.
+// Large schedule grid + polished course list + summary + actions.
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { CourseEntry, RunnerUp, Schedule, SwapState } from "@/lib/types"
 import { generateICS } from "@/lib/icsExport"
+import ScheduleGrid from "./ScheduleGrid"
 
 interface Props {
   schedule: Schedule
@@ -23,9 +22,13 @@ export default function ScheduleDetail({
 }: Props) {
   const [expandedSwap, setExpandedSwap] = useState<string | null>(null)
 
-  // Apply any client-side swaps on top of the original schedule
   const resolvedCourses = schedule.courses.map((course) =>
     swapState[course.section_id] ?? course
+  )
+
+  const previewSchedule: Schedule = useMemo(
+    () => ({ ...schedule, courses: resolvedCourses }),
+    [schedule, resolvedCourses]
   )
 
   const handleExport = () => {
@@ -40,86 +43,144 @@ export default function ScheduleDetail({
   }
 
   return (
-    <div className="space-y-6">
+    <div style={{ display: "flex", flexDirection: "column", gap: 40, paddingTop: 32 }}>
 
       {/* Section header */}
-      <div className="flex items-center justify-between">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", flexWrap: "wrap", gap: 20, paddingBottom: 12, borderBottom: "1px solid var(--border-subtle)" }}>
         <div>
-          <p className="text-[#990000] text-xs font-mono tracking-widest uppercase mb-1">
-            Schedule Details
+          <p
+            style={{
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+              fontSize: 11,
+              fontWeight: 600,
+              letterSpacing: "0.18em",
+              textTransform: "uppercase",
+              color: "var(--cardinal)",
+              marginBottom: 12,
+            }}
+          >
+            Step 03 / Review &amp; Export
           </p>
-          <h3 className="text-xl font-bold tracking-tight text-white">
-            {resolvedCourses.length} Courses · {schedule.total_units} Units
+          <h3
+            style={{
+              fontFamily: "'DM Serif Display', serif",
+              color: "var(--text-primary)",
+              fontSize: 36,
+              lineHeight: 1.05,
+              letterSpacing: "-0.01em",
+              marginBottom: 10,
+            }}
+          >
+            Your selection.
           </h3>
+          <p style={{ color: "var(--text-tertiary)", fontSize: 14, lineHeight: 1.5, maxWidth: 520 }}>
+            {resolvedCourses.length} courses, {schedule.total_units} units. Swap GE alternatives below, then export to your calendar.
+          </p>
         </div>
-        <div className="flex gap-2">
-          <button
-            onClick={handleExport}
-            className="px-4 py-2 rounded-xl text-sm font-semibold bg-white/[0.06] border border-white/10 text-white/70 hover:bg-white/10 hover:text-white transition-all"
-          >
-            Export .ics
-          </button>
-          <button
-            onClick={onStartOver}
-            className="px-4 py-2 rounded-xl text-sm font-semibold bg-white/[0.06] border border-white/10 text-white/70 hover:bg-[#990000] hover:text-white hover:border-[#990000] transition-all"
-          >
-            Start Over
-          </button>
+        <div style={{ display: "flex", gap: 10 }}>
+          <SecondaryButton onClick={handleExport} label="Export .ics" />
+          <PrimaryButton onClick={onStartOver} label="Start over" />
         </div>
+      </div>
+
+      {/* Large schedule grid */}
+      <div
+        style={{
+          borderRadius: 18,
+          overflow: "hidden",
+          background: "var(--bg-card)",
+          border: "1px solid var(--border-subtle)",
+          boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+          height: 680,
+        }}
+      >
+        <ScheduleGrid schedule={previewSchedule} size="large" />
       </div>
 
       {/* Course list */}
-      <div className="space-y-3">
-        {resolvedCourses.map((course) => (
-          <CourseRow
-            key={course.section_id}
-            course={course}
-            isSwapOpen={expandedSwap === course.section_id}
-            onToggleSwap={() =>
-              setExpandedSwap(
-                expandedSwap === course.section_id ? null : course.section_id
-              )
-            }
-            onSwap={(runner) => {
-              // Convert runner-up to a CourseEntry for local state
-              const replacement: CourseEntry = {
-                ...course,
-                course: runner.course,
-                section_id: runner.section_id,
-                professor: runner.professor,
-                rmp_score: runner.rmp_score,
-                rmp_difficulty: null,
-                would_take_again: null,
-                rmp_total_ratings: 0,
-                rmp_profile_url: null,
-                no_rmp_data: false,
-                days: runner.days,
-                start_time: runner.start_time,
-                end_time: runner.end_time,
-                seats_available: runner.seats_available,
-                total_seats: runner.total_seats,
-                seat_color: "#FFFFFF",
-                linked_sections: runner.linked_sections,
-                runner_ups: null,
+      <div>
+        <p
+          style={{
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: "0.18em",
+            textTransform: "uppercase",
+            color: "var(--text-tertiary)",
+            marginBottom: 16,
+          }}
+        >
+          Courses
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {resolvedCourses.map((course) => (
+            <CourseRow
+              key={course.section_id}
+              course={course}
+              isSwapOpen={expandedSwap === course.section_id}
+              onToggleSwap={() =>
+                setExpandedSwap(
+                  expandedSwap === course.section_id ? null : course.section_id
+                )
               }
-              onSwap(course.section_id, replacement)
-              setExpandedSwap(null)
-            }}
-          />
-        ))}
+              onSwap={(runner) => {
+                const replacement: CourseEntry = {
+                  ...course,
+                  course: runner.course,
+                  section_id: runner.section_id,
+                  professor: runner.professor,
+                  rmp_score: runner.rmp_score,
+                  rmp_difficulty: null,
+                  would_take_again: null,
+                  rmp_total_ratings: 0,
+                  rmp_profile_url: null,
+                  no_rmp_data: false,
+                  days: runner.days,
+                  start_time: runner.start_time,
+                  end_time: runner.end_time,
+                  seats_available: runner.seats_available,
+                  total_seats: runner.total_seats,
+                  seat_color: "#FFFFFF",
+                  linked_sections: runner.linked_sections,
+                  runner_ups: null,
+                }
+                onSwap(course.section_id, replacement)
+                setExpandedSwap(null)
+              }}
+            />
+          ))}
+        </div>
       </div>
 
       {/* Summary footer */}
-      <div className="bg-white/[0.02] border border-white/[0.07] rounded-2xl p-5">
-        <p className="text-white/40 text-xs uppercase tracking-widest font-mono mb-3">
+      <div
+        style={{
+          background: "var(--bg-card)",
+          border: "1px solid var(--border-subtle)",
+          borderRadius: 18,
+          padding: 28,
+          boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+        }}
+      >
+        <p
+          style={{
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: "0.18em",
+            textTransform: "uppercase",
+            color: "var(--text-tertiary)",
+            marginBottom: 16,
+          }}
+        >
           Schedule Summary
         </p>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16 }}>
           <SummaryCell label="Total Units" value={String(schedule.total_units)} />
           <SummaryCell label="Avg RMP" value={schedule.avg_rmp.toFixed(1)} />
           <SummaryCell
             label="Days on Campus"
-            value={schedule.days_with_class.join(", ")}
+            value={schedule.days_with_class.length.toString()}
           />
           <SummaryCell
             label="Total Gap Time"
@@ -131,7 +192,79 @@ export default function ScheduleDetail({
   )
 }
 
+// ── Buttons ───────────────────────────────────────────────────────────────────
+
+function PrimaryButton({ onClick, label }: { onClick: () => void; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: "12px 22px",
+        borderRadius: 12,
+        border: "none",
+        background: "var(--text-primary)",
+        color: "#ffffff",
+        fontFamily: "'Inter', sans-serif",
+        fontSize: 14,
+        fontWeight: 600,
+        cursor: "pointer",
+        transition: "background 0.15s",
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = "var(--cardinal)" }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = "var(--text-primary)" }}
+    >
+      {label}
+    </button>
+  )
+}
+
+function SecondaryButton({ onClick, label }: { onClick: () => void; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: "12px 22px",
+        borderRadius: 12,
+        border: "1.5px solid var(--border-default)",
+        background: "var(--bg-card)",
+        color: "var(--text-primary)",
+        fontFamily: "'Inter', sans-serif",
+        fontSize: 14,
+        fontWeight: 600,
+        cursor: "pointer",
+        transition: "border-color 0.15s, background 0.15s",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = "var(--cardinal)"
+        e.currentTarget.style.background = "rgba(153,0,0,0.04)"
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = "var(--border-default)"
+        e.currentTarget.style.background = "var(--bg-card)"
+      }}
+    >
+      {label}
+    </button>
+  )
+}
+
 // ── Course row ────────────────────────────────────────────────────────────────
+
+function formatTime(t: string): string {
+  const [h, m] = t.split(":").map(Number)
+  const ampm = h >= 12 ? "pm" : "am"
+  const hour = h > 12 ? h - 12 : h === 0 ? 12 : h
+  return m === 0 ? `${hour}${ampm}` : `${hour}:${m.toString().padStart(2, "0")}${ampm}`
+}
+
+function formatDays(days: string[]): string {
+  return days.join(" / ")
+}
+
+function titleCase(s: string): string {
+  if (!s) return ""
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase()
+}
 
 function CourseRow({
   course,
@@ -144,100 +277,167 @@ function CourseRow({
   onToggleSwap: () => void
   onSwap: (runner: RunnerUp) => void
 }) {
-  const formatTime = (t: string) => {
-    const [h, m] = t.split(":").map(Number)
-    const ampm = h >= 12 ? "pm" : "am"
-    const hour = h > 12 ? h - 12 : h === 0 ? 12 : h
-    return `${hour}:${m.toString().padStart(2, "0")}${ampm}`
-  }
-
-  const formatDays = (days: string[]) => days.join(" / ")
-
   return (
-    <div className="bg-white/[0.02] border border-white/[0.07] rounded-2xl overflow-hidden">
+    <div
+      style={{
+        background: "var(--bg-card)",
+        border: "1px solid var(--border-subtle)",
+        borderRadius: 18,
+        overflow: "hidden",
+        boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+      }}
+    >
+      <div style={{ padding: 24 }}>
+        {/* Course code + chips */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+          <span
+            style={{
+              fontFamily: "'DM Serif Display', serif",
+              fontSize: 24,
+              letterSpacing: "-0.01em",
+              color: "var(--text-primary)",
+              lineHeight: 1,
+            }}
+          >
+            {course.course}
+          </span>
 
-      {/* Main row */}
-      <div className="p-4">
-        <div className="flex items-start justify-between gap-3">
+          {course.entry_type === "ge" && course.ge_slot && (
+            <Chip
+              bg="rgba(194, 65, 12, 0.08)"
+              fg="#9A3412"
+              border="rgba(194, 65, 12, 0.30)"
+            >
+              {course.ge_slot}
+            </Chip>
+          )}
 
-          {/* Left — course info */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap mb-1">
-              <span className="text-white font-bold text-base tracking-tight">
-                {course.course}
-              </span>
+          {course.is_double_count && (
+            <Chip
+              bg="rgba(240, 180, 0, 0.14)"
+              fg="#6B5200"
+              border="rgba(240, 180, 0, 0.45)"
+            >
+              2x GE: {course.double_count_categories.join(" + ")}
+            </Chip>
+          )}
 
-              {/* GE badge */}
-              {course.entry_type === "ge" && course.ge_slot && (
-                <span className="text-[0.6rem] font-bold px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-300 border border-orange-500/20">
-                  {course.ge_slot}
-                </span>
-              )}
+          <Chip
+            bg="rgba(0,0,0,0.04)"
+            fg="var(--text-tertiary)"
+            border="var(--border-subtle)"
+          >
+            {titleCase(course.section_type)}
+          </Chip>
+        </div>
 
-              {/* Double-count badge */}
-              {course.is_double_count && (
-                <span className="text-[0.6rem] font-bold px-1.5 py-0.5 rounded bg-[#FFCC00]/15 text-[#FFCC00] border border-[#FFCC00]/25">
-                  ✦ 2× GE: {course.double_count_categories.join(" + ")}
-                </span>
-              )}
+        {/* Professor + inline RMP link + inline seat status */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            flexWrap: "wrap",
+            marginBottom: 14,
+          }}
+        >
+          <span style={{ fontSize: 15, fontWeight: 500, color: "var(--text-primary)" }}>
+            {course.professor}
+          </span>
+          <RMPLink course={course} />
+          <SeatIndicator course={course} />
+        </div>
 
-              {/* Section type */}
-              <span className="text-[0.6rem] text-white/25 font-mono uppercase">
-                {course.section_type}
-              </span>
-            </div>
+        {/* Meta strip */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 20px", fontSize: 13, color: "var(--text-tertiary)" }}>
+          <Meta label="Days" value={formatDays(course.days)} />
+          <Meta label="Time" value={`${formatTime(course.start_time)} to ${formatTime(course.end_time)}`} />
+          <Meta label="Units" value={course.units.toString()} />
+          <Meta label="Location" value={course.location || "TBA"} />
+        </div>
 
-            <p className="text-white/50 text-sm mb-2">{course.professor}</p>
-
-            {/* Schedule info */}
-            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/35">
-              <span>{formatDays(course.days)} · {formatTime(course.start_time)} – {formatTime(course.end_time)}</span>
-              <span>{course.location}</span>
-              <span>{course.units} units</span>
-              <span
-                className="capitalize"
-                style={{ color: course.modality === "online" ? "#60a5fa" : undefined }}
-              >
-                {course.modality.replace("_", " ")}
-              </span>
-            </div>
-
-            {/* Linked sections (discussion, lab, quiz, etc.) */}
+        {course.linked_sections.length > 0 && (
+          <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px dashed var(--border-subtle)", display: "flex", flexDirection: "column", gap: 6 }}>
             {course.linked_sections.map((ls) => (
-              <div key={ls.section_id} className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/25 pl-3 border-l border-white/10">
-                <span className="capitalize text-white/35">{ls.section_type}</span>
-                <span>
-                  {formatDays(ls.days)} · {formatTime(ls.start_time)} – {formatTime(ls.end_time)}
+              <div
+                key={ls.section_id}
+                style={{
+                  display: "flex",
+                  gap: 16,
+                  flexWrap: "wrap",
+                  fontSize: 12,
+                  color: "var(--text-tertiary)",
+                  alignItems: "baseline",
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                    fontWeight: 700,
+                    color: "var(--text-secondary)",
+                    letterSpacing: "0.05em",
+                    textTransform: "uppercase",
+                    fontSize: 10,
+                  }}
+                >
+                  {titleCase(ls.section_type)}
                 </span>
-                <span>{ls.location}</span>
+                <span>{formatDays(ls.days)}</span>
+                <span>{formatTime(ls.start_time)} to {formatTime(ls.end_time)}</span>
+                {ls.location && <span>{ls.location}</span>}
               </div>
             ))}
           </div>
+        )}
 
-          {/* Right — RMP + seats */}
-          <div className="flex flex-col items-end gap-2 shrink-0">
-            <RMPBadge course={course} />
-            <SeatIndicator course={course} />
-          </div>
-        </div>
-
-        {/* GE swap toggle */}
         {course.entry_type === "ge" && course.runner_ups && course.runner_ups.length > 0 && (
           <button
             onClick={onToggleSwap}
-            className="mt-3 text-xs text-white/35 hover:text-white/60 transition-colors flex items-center gap-1"
+            style={{
+              marginTop: 16,
+              padding: 0,
+              border: "none",
+              background: "transparent",
+              color: "var(--text-tertiary)",
+              fontSize: 12,
+              fontWeight: 600,
+              letterSpacing: "0.02em",
+              cursor: "pointer",
+              transition: "color 0.15s",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--cardinal)" }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-tertiary)" }}
           >
-            <span>{isSwapOpen ? "▲" : "▼"}</span>
-            {isSwapOpen ? "Hide alternatives" : `${course.runner_ups.length} alternative${course.runner_ups.length > 1 ? "s" : ""} available`}
+            {isSwapOpen
+              ? "Hide alternatives"
+              : `Show ${course.runner_ups.length} alternative${course.runner_ups.length > 1 ? "s" : ""}`}
           </button>
         )}
       </div>
 
-      {/* Swap panel */}
       {isSwapOpen && course.runner_ups && (
-        <div className="border-t border-white/[0.06] bg-white/[0.02] px-4 py-3 space-y-2">
-          <p className="text-white/30 text-xs font-mono uppercase tracking-wider mb-3">
-            Alternative courses for {course.ge_slot}
+        <div
+          style={{
+            borderTop: "1px solid var(--border-subtle)",
+            background: "var(--bg-subtle)",
+            padding: "16px 24px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+          }}
+        >
+          <p
+            style={{
+              fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: "0.15em",
+              textTransform: "uppercase",
+              color: "var(--text-tertiary)",
+              marginBottom: 10,
+            }}
+          >
+            Alternatives for {course.ge_slot}
           </p>
           {course.runner_ups.map((runner) => (
             <RunnerUpRow
@@ -252,78 +452,185 @@ function CourseRow({
   )
 }
 
-// ── RMP badge ─────────────────────────────────────────────────────────────────
+// ── Sub-components ────────────────────────────────────────────────────────────
 
-function RMPBadge({ course }: { course: CourseEntry }) {
+function Chip({
+  children,
+  bg,
+  fg,
+  border,
+}: {
+  children: React.ReactNode
+  bg: string
+  fg: string
+  border: string
+}) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        background: bg,
+        color: fg,
+        border: `1px solid ${border}`,
+        borderRadius: 999,
+        padding: "3px 9px",
+        fontSize: 11,
+        fontWeight: 600,
+        letterSpacing: "0.02em",
+      }}
+    >
+      {children}
+    </span>
+  )
+}
+
+function Meta({ label, value }: { label: string; value: string }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "baseline", gap: 6 }}>
+      <span
+        style={{
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          fontSize: 9,
+          fontWeight: 700,
+          letterSpacing: "0.14em",
+          textTransform: "uppercase",
+          color: "var(--text-tertiary)",
+        }}
+      >
+        {label}
+      </span>
+      <span style={{ color: "var(--text-secondary)" }}>
+        {value}
+      </span>
+    </span>
+  )
+}
+
+function RMPLink({ course }: { course: CourseEntry }) {
   if (course.no_rmp_data) {
     return (
-      <span className="text-xs text-white/25 border border-white/10 px-2 py-0.5 rounded-lg">
-        No ratings
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          fontSize: 12,
+          fontWeight: 600,
+          padding: "5px 10px",
+          borderRadius: 8,
+          color: "var(--text-tertiary)",
+          border: "1px solid var(--border-default)",
+          background: "var(--bg-card)",
+          letterSpacing: "0.02em",
+        }}
+      >
+        No RMP ratings
       </span>
     )
   }
 
-  const color =
+  const tier =
     course.rmp_score >= 4
-      ? "text-emerald-400 bg-emerald-400/10 border-emerald-400/20"
+      ? { fg: "#15803D", bg: "rgba(21,128,61,0.08)", border: "rgba(21,128,61,0.30)", hoverBg: "rgba(21,128,61,0.14)" }
       : course.rmp_score >= 3
-      ? "text-yellow-400 bg-yellow-400/10 border-yellow-400/20"
-      : "text-red-400 bg-red-400/10 border-red-400/20"
+      ? { fg: "#9A6700", bg: "rgba(154,103,0,0.08)", border: "rgba(154,103,0,0.30)", hoverBg: "rgba(154,103,0,0.14)" }
+      : { fg: "#B91C1C", bg: "rgba(185,28,28,0.08)", border: "rgba(185,28,28,0.30)", hoverBg: "rgba(185,28,28,0.14)" }
+
+  const href = course.rmp_profile_url ?? undefined
+  const isLink = Boolean(href)
 
   return (
-    <div className="flex flex-col items-end gap-0.5">
-      <a
-        href={course.rmp_profile_url ?? "#"}
-        target="_blank"
-        rel="noopener noreferrer"
-        className={`text-xs font-bold px-2 py-0.5 rounded-lg border transition-opacity hover:opacity-80 ${color}`}
+    <a
+      href={href}
+      target={isLink ? "_blank" : undefined}
+      rel={isLink ? "noopener noreferrer" : undefined}
+      title={isLink ? "Open Rate My Professors profile" : undefined}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 8,
+        fontFamily: "'Inter', sans-serif",
+        fontSize: 13,
+        fontWeight: 600,
+        padding: "5px 12px",
+        borderRadius: 8,
+        color: tier.fg,
+        background: tier.bg,
+        border: `1px solid ${tier.border}`,
+        textDecoration: "none",
+        letterSpacing: "0.01em",
+        cursor: isLink ? "pointer" : "default",
+        transition: "background 0.15s, border-color 0.15s",
+        fontVariantNumeric: "tabular-nums",
+      }}
+      onMouseEnter={(e) => {
+        if (!isLink) return
+        e.currentTarget.style.background = tier.hoverBg
+      }}
+      onMouseLeave={(e) => {
+        if (!isLink) return
+        e.currentTarget.style.background = tier.bg
+      }}
+    >
+      <span
+        style={{
+          fontFamily: "'DM Serif Display', serif",
+          fontSize: 15,
+          letterSpacing: "-0.01em",
+          lineHeight: 1,
+        }}
       >
-        ⭐ {course.rmp_score.toFixed(1)}
-      </a>
+        {course.rmp_score.toFixed(1)}
+      </span>
+      <span style={{ opacity: 0.85, fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+        RMP
+      </span>
       {course.rmp_difficulty !== null && (
-        <span className="text-[0.6rem] text-white/25">
-          Difficulty {course.rmp_difficulty?.toFixed(1)}
+        <span style={{ opacity: 0.7, fontSize: 11, fontWeight: 500, letterSpacing: "0.02em" }}>
+          · Diff {course.rmp_difficulty?.toFixed(1)}
         </span>
       )}
       {course.would_take_again !== null && (
-        <span className="text-[0.6rem] text-white/25">
-          {course.would_take_again}% again
+        <span style={{ opacity: 0.7, fontSize: 11, fontWeight: 500, letterSpacing: "0.02em" }}>
+          · {course.would_take_again}% retake
         </span>
       )}
-    </div>
+    </a>
   )
 }
 
-// ── Seat indicator ────────────────────────────────────────────────────────────
-
 function SeatIndicator({ course }: { course: CourseEntry }) {
   const pctRemaining =
-    course.total_seats > 0
-      ? course.seats_available / course.total_seats
-      : 0
+    course.total_seats > 0 ? course.seats_available / course.total_seats : 0
 
   const label =
     course.seats_available === 0
       ? "Full"
       : pctRemaining < 0.30
       ? `${course.seats_available} seats left`
-      : `${course.seats_available} / ${course.total_seats} seats`
+      : `${course.seats_available} of ${course.total_seats} seats`
+
+  const isHealthy = course.seat_color === "#FFFFFF"
+  const fg = isHealthy ? "var(--text-tertiary)" : course.seat_color
+  const border = isHealthy ? "var(--border-default)" : course.seat_color
 
   return (
     <span
-      className="text-[0.6rem] font-semibold px-1.5 py-0.5 rounded"
       style={{
-        backgroundColor: course.seat_color + "22",
-        color: course.seat_color === "#FFFFFF" ? "rgba(255,255,255,0.4)" : course.seat_color,
-        border: `1px solid ${course.seat_color}33`,
+        fontSize: 11,
+        fontWeight: 600,
+        padding: "4px 10px",
+        borderRadius: 8,
+        color: fg,
+        border: `1px solid ${border}`,
+        background: "var(--bg-card)",
+        letterSpacing: "0.02em",
       }}
     >
       {label}
     </span>
   )
 }
-
-// ── Runner-up row ─────────────────────────────────────────────────────────────
 
 function RunnerUpRow({
   runner,
@@ -332,46 +639,73 @@ function RunnerUpRow({
   runner: RunnerUp
   onSwap: () => void
 }) {
-  const formatTime = (t: string) => {
-    const [h, m] = t.split(":").map(Number)
-    const ampm = h >= 12 ? "pm" : "am"
-    const hour = h > 12 ? h - 12 : h === 0 ? 12 : h
-    return `${hour}:${m.toString().padStart(2, "0")}${ampm}`
-  }
-
-  const rmpColor =
+  const rmpTier =
     runner.rmp_score >= 4
-      ? "text-emerald-400"
+      ? "#15803D"
       : runner.rmp_score >= 3
-      ? "text-yellow-400"
-      : "text-red-400"
+      ? "#9A6700"
+      : "#B91C1C"
 
   return (
-    <div className="flex items-center justify-between gap-3 py-2 border-b border-white/[0.04] last:border-0">
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-0.5">
-          <span className="text-white/70 text-sm font-medium">{runner.course}</span>
-          <span className={`text-xs font-bold ${rmpColor}`}>
-            ⭐ {runner.rmp_score.toFixed(1)}
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        gap: 16,
+        padding: "12px 0",
+        borderBottom: "1px solid var(--border-subtle)",
+        alignItems: "flex-start",
+      }}
+    >
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 2 }}>
+          <span style={{ fontWeight: 600, fontSize: 14, color: "var(--text-primary)" }}>
+            {runner.course}
+          </span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: rmpTier, fontVariantNumeric: "tabular-nums" }}>
+            {runner.rmp_score.toFixed(1)} RMP
           </span>
         </div>
-        <p className="text-white/35 text-xs">{runner.professor}</p>
-        <p className="text-white/25 text-xs">
-          {runner.days.join(" / ")} · {formatTime(runner.start_time)} – {formatTime(runner.end_time)}
+        <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 4 }}>
+          {runner.professor}
+        </p>
+        <p style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+          {runner.days.join(" / ")} · {formatTime(runner.start_time)} to {formatTime(runner.end_time)}
           {runner.seats_available !== undefined && (
-            <span className="ml-2">{runner.seats_available} seats</span>
+            <span style={{ marginLeft: 8 }}>{runner.seats_available} seats</span>
           )}
         </p>
         {runner.linked_sections.map((ls) => (
-          <p key={ls.section_id} className="text-white/20 text-xs mt-0.5">
-            + {ls.section_type} ·{" "}
-            {ls.days.join("/")} · {formatTime(ls.start_time)}
+          <p key={ls.section_id} style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
+            {titleCase(ls.section_type)} · {ls.days.join("/")} · {formatTime(ls.start_time)}
           </p>
         ))}
       </div>
       <button
         onClick={onSwap}
-        className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white/[0.06] border border-white/10 text-white/60 hover:bg-[#990000] hover:text-white hover:border-[#990000] transition-all"
+        style={{
+          flexShrink: 0,
+          padding: "8px 16px",
+          borderRadius: 10,
+          border: "1.5px solid var(--border-default)",
+          background: "var(--bg-card)",
+          color: "var(--text-primary)",
+          fontFamily: "'Inter', sans-serif",
+          fontSize: 12,
+          fontWeight: 600,
+          cursor: "pointer",
+          transition: "border-color 0.15s, background 0.15s, color 0.15s",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = "var(--cardinal)"
+          e.currentTarget.style.borderColor = "var(--cardinal)"
+          e.currentTarget.style.color = "#ffffff"
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = "var(--bg-card)"
+          e.currentTarget.style.borderColor = "var(--border-default)"
+          e.currentTarget.style.color = "var(--text-primary)"
+        }}
       >
         Swap
       </button>
@@ -379,13 +713,34 @@ function RunnerUpRow({
   )
 }
 
-// ── Summary cell ──────────────────────────────────────────────────────────────
-
 function SummaryCell({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <p className="text-white/30 text-xs mb-1">{label}</p>
-      <p className="text-white font-semibold text-sm">{value}</p>
+      <p
+        style={{
+          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+          fontSize: 10,
+          fontWeight: 600,
+          letterSpacing: "0.15em",
+          textTransform: "uppercase",
+          color: "var(--text-tertiary)",
+          marginBottom: 6,
+        }}
+      >
+        {label}
+      </p>
+      <p
+        style={{
+          fontFamily: "'Inter', sans-serif",
+          fontSize: 20,
+          fontWeight: 600,
+          lineHeight: 1,
+          color: "var(--text-primary)",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {value}
+      </p>
     </div>
   )
 }

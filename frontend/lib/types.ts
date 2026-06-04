@@ -8,6 +8,7 @@ export type EntryType = "course" | "ge"
 export type SectionType = "lecture" | "seminar" | "discussion" | "lab" | "quiz" | "online"
 
 export interface DiscussionOption {
+  // Discussion section
   section_id: string
   days: string[]
   start_time: string
@@ -15,6 +16,38 @@ export interface DiscussionOption {
   seats_available: number
   total_seats: number
   location: string
+
+  // Hint about which lecture this discussion belongs to. The frontend flattens
+  // the backend's lecture-keyed bundles into a flat list of options; these
+  // fields let the UI label the option and let us resubmit the lecture choice.
+  lecture_section_id: string
+  lecture_professor: string
+  lecture_days: string[]
+  lecture_start_time: string
+  lecture_end_time: string
+}
+
+// Backend's per-lecture bundle, as returned in linked_section_options.
+// Each lecture has its compatible discussion/lab/quiz options grouped under
+// options_by_type. We flatten this into DiscussionOption[] for the UI.
+export interface BundleLinkedSection {
+  section_id: string
+  section_type: string
+  days: string[]
+  start_time: string
+  end_time: string
+  seats_available: number
+  total_seats: number
+  location: string
+}
+
+export interface BundleOption {
+  lecture_section_id: string
+  professor: string
+  lecture_days: string[]
+  lecture_start_time: string
+  lecture_end_time: string
+  options_by_type: Record<string, BundleLinkedSection[]>
 }
 
 // ---------------------------------------------------------------------------
@@ -46,8 +79,9 @@ export interface GenerateRequest {
   prof_slider: number             // 0–1
   convenience_slider: number      // 0–1
   planning_mode?: boolean
-  // Sent on second attempt if needs_discussion_prompt was returned
-  discussion_preferences?: Record<string, string>  // course_code -> chosen section_id
+  // Sent on second attempt if needs_linked_section_prompt was returned.
+  // Shape: { course_code: { lecture_section_id, discussion, lab?, quiz? } }
+  linked_section_preferences?: Record<string, Record<string, string>>
 }
 
 // ---------------------------------------------------------------------------
@@ -152,8 +186,11 @@ export interface Schedule {
 export interface GenerateResponse {
   schedules: Schedule[]
   error: string | null
-  needs_discussion_prompt: string | null  // course code needing a discussion pick
-  discussion_options: DiscussionOption[]  // available slots to show the user
+  // Course code that still needs the user to pick a lecture/discussion combo.
+  needs_linked_section_prompt: string | null
+  // Backend's raw shape: course_code -> list of per-lecture bundles.
+  // The frontend flattens this into DiscussionOption[] for the prompt UI.
+  linked_section_options: Record<string, BundleOption[]>
 }
 
 // ---------------------------------------------------------------------------

@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import InputForm from "@/components/InputForm"
+import LeftPanel from "@/components/LeftPanel"
 import LoadingScreen from "@/components/LoadingScreen"
 import ScheduleImageCard from "@/components/ScheduleImageCard"
 import ScheduleDetail from "@/components/ScheduleDetail"
@@ -41,9 +42,33 @@ export default function Home() {
       )
       const data: GenerateResponse = await res.json()
 
-      if (data.needs_discussion_prompt) {
-        setDiscussionPromptCourse(data.needs_discussion_prompt)
-        setDiscussionOptions(data.discussion_options ?? [])
+      if (data.needs_linked_section_prompt) {
+        const course = data.needs_linked_section_prompt
+        const bundles = data.linked_section_options?.[course] ?? []
+        // Flatten lecture-keyed bundles into a single list of discussion
+        // options. Each option carries the lecture it came from so we can
+        // resubmit both ids together. Bundles whose options_by_type has no
+        // "discussion" type are skipped (lecture-only courses shouldn't have
+        // hit this path in the first place; if they do, the user has nothing
+        // to pick).
+        const flatOptions: DiscussionOption[] = bundles.flatMap((b) =>
+          (b.options_by_type?.discussion ?? []).map((d) => ({
+            section_id: d.section_id,
+            days: d.days,
+            start_time: d.start_time,
+            end_time: d.end_time,
+            seats_available: d.seats_available,
+            total_seats: d.total_seats,
+            location: d.location,
+            lecture_section_id: b.lecture_section_id,
+            lecture_professor: b.professor,
+            lecture_days: b.lecture_days,
+            lecture_start_time: b.lecture_start_time,
+            lecture_end_time: b.lecture_end_time,
+          }))
+        )
+        setDiscussionPromptCourse(course)
+        setDiscussionOptions(flatOptions)
         setPendingPayload(payload)
         setStage("form")
         return
@@ -70,12 +95,14 @@ export default function Home() {
     callGenerate(payload)
   }
 
-  const handleDiscussionPreference = (pref: Record<string, string>) => {
+  const handleDiscussionPreference = (
+    pref: Record<string, Record<string, string>>
+  ) => {
     if (!pendingPayload) return
     const updated: GenerateRequest = {
       ...pendingPayload,
-      discussion_preferences: {
-        ...(pendingPayload.discussion_preferences ?? {}),
+      linked_section_preferences: {
+        ...(pendingPayload.linked_section_preferences ?? {}),
         ...pref,
       },
     }
@@ -84,6 +111,16 @@ export default function Home() {
   }
 
   const handleSelect = (schedule: Schedule) => {
+    // Clicking the already-selected card deselects it and returns to the
+    // pre-detail comparison view.
+    if (selectedSchedule?.rank === schedule.rank) {
+      setSelectedSchedule(null)
+      setSwapState({})
+      setStage("results")
+      window.scrollTo({ top: 0, behavior: "smooth" })
+      return
+    }
+    // Clicking a different card switches the detail view to that schedule.
     setSelectedSchedule(schedule)
     setSwapState({})
     setStage("detail")
@@ -106,98 +143,77 @@ export default function Home() {
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
 
-  const showWebRegHeader = stage !== "form" && stage !== "loading"
+  const currentStep: 1 | 2 | 3 = stage === "detail" ? 3 : stage === "form" ? 1 : 2
+
+  // The form stage uses InputForm's own shell (LeftPanel + content area).
+  // For loading/results/detail we reproduce the same shell here so the layout
+  // stays identical across the whole app.
+  if (stage === "form") {
+    return (
+      <InputForm
+        onSubmit={handleSubmit}
+        error={error}
+        discussionPromptCourse={discussionPromptCourse}
+        discussionOptions={discussionOptions}
+        onDiscussionPreference={handleDiscussionPreference}
+      />
+    )
+  }
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: "var(--bg-page)" }}>
-
-      {showWebRegHeader && (
-        <>
-          {/* ── Top bar — cardinal red like webreg ── */}
-          <div style={{ backgroundColor: "var(--cardinal)" }} className="px-6 py-3 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div
-                className="w-8 h-8 rounded flex items-center justify-center font-bold text-sm"
-                style={{ backgroundColor: "var(--cardinal-dark)", color: "var(--gold)" }}
-              >
-                TS
-              </div>
-              <span className="text-white font-semibold text-lg tracking-tight"
-                style={{ fontFamily: "'DM Serif Display', serif" }}>
-                Trojan Scheduler
-              </span>
-            </div>
-            <div className="flex items-center gap-6">
-              <span className="text-white/70 text-sm hidden md:block">
-                USC · Fall 2025
-              </span>
-              {(stage === "results" || stage === "detail") && (
-                <button
-                  onClick={handleStartOver}
-                  className="text-white/80 hover:text-white text-sm transition-colors underline underline-offset-2"
-                >
-                  Start Over
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* ── Secondary nav bar — dark red like webreg ── */}
-          <div style={{ backgroundColor: "var(--cardinal-dark)" }} className="px-6 py-2 flex items-center gap-1">
-            <div
-              className="px-4 py-1.5 rounded text-sm font-medium"
-              style={{ backgroundColor: "var(--cardinal)", color: "var(--gold)" }}
-            >
-              Schedule Builder
-            </div>
-            {(stage === "results" || stage === "detail") && (
-              <>
-                <div className="px-4 py-1.5 text-sm text-white/50">
-                  Results
-                </div>
-                {stage === "detail" && (
-                  <div className="px-4 py-1.5 text-sm text-white/50">
-                    Detail View
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        </>
-      )}
-
-      {/* ── Main content ── */}
-      <main>
-        {stage === "form" && (
-          <InputForm
-            onSubmit={handleSubmit}
-            error={error}
-            discussionPromptCourse={discussionPromptCourse}
-            discussionOptions={discussionOptions}
-            onDiscussionPreference={handleDiscussionPreference}
-          />
-        )}
-
+    <div style={{ display: "flex", minHeight: "100vh" }}>
+      <LeftPanel currentStep={currentStep} onStartOver={handleStartOver} />
+      <div
+        style={{
+          marginLeft: "22.222%",
+          width: "77.778%",
+          minHeight: "100vh",
+          backgroundColor: "var(--bg-page)",
+        }}
+      >
         {stage === "loading" && <LoadingScreen />}
 
         {(stage === "results" || stage === "detail") && response && (
-          <div className="max-w-7xl mx-auto px-6 py-8">
+          <div style={{ maxWidth: 1280, margin: "0 auto", padding: "56px 64px 96px" }}>
 
             {/* Page title */}
-            <div className="mb-6 pb-4" style={{ borderBottom: "1px solid var(--border-subtle)" }}>
-              <h2 style={{ fontFamily: "'DM Serif Display', serif", color: "var(--text-primary)" }}
-                className="text-2xl mb-1">
-                {stage === "results" ? "Your Top 3 Schedules" : "Schedule Selected"}
-              </h2>
-              <p style={{ color: "var(--text-tertiary)" }} className="text-sm">
+            <div style={{ marginBottom: 48 }}>
+              <p
+                style={{
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  letterSpacing: "0.18em",
+                  textTransform: "uppercase",
+                  color: "var(--cardinal)",
+                  marginBottom: 14,
+                }}
+              >
                 {stage === "results"
-                  ? "Compare your options below and select one to view full details."
-                  : "Scroll down to view details, swap GE courses, or export to calendar."}
+                  ? `${String(response.schedules.length).padStart(2, "0")} Options`
+                  : "Selected"}
+              </p>
+              <h2
+                style={{
+                  fontFamily: "'DM Serif Display', serif",
+                  color: "var(--text-primary)",
+                  fontSize: 44,
+                  lineHeight: 1.05,
+                  letterSpacing: "-0.01em",
+                  marginBottom: 12,
+                }}
+              >
+                {stage === "results" ? "Your schedules." : "Schedule selected."}
+              </h2>
+              <p style={{ color: "var(--text-tertiary)", fontSize: 15, maxWidth: 520, lineHeight: 1.6 }}>
+                {stage === "results"
+                  ? "Three best builds, ranked by professor quality, compactness, and minimal gaps. Pick one to drill in."
+                  : "Scroll down to see every course, swap GE choices, or export to your calendar."}
               </p>
             </div>
 
             {/* Schedule image cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-10">
+            <div className="grid grid-cols-1 md:grid-cols-3" style={{ gap: 28, marginBottom: 48 }}>
               {response.schedules.map((sched) => (
                 <ScheduleImageCard
                   key={sched.rank}
@@ -226,16 +242,7 @@ export default function Home() {
             )}
           </div>
         )}
-      </main>
-
-      {/* ── Footer (hidden on step 1 form to keep layout in one viewport) ── */}
-      {stage !== "form" && (
-        <footer className="mt-16 py-6 text-center" style={{ borderTop: "1px solid var(--border-subtle)" }}>
-          <p style={{ color: "var(--text-tertiary)" }} className="text-xs">
-            Trojan Scheduler · Built for USC students · Not affiliated with USC
-          </p>
-        </footer>
-      )}
+      </div>
     </div>
   )
 }

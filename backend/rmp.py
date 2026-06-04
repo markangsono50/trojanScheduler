@@ -27,6 +27,32 @@ query SearchTeachersQuery($text: String!, $schoolID: ID) {
 }
 """
 
+# Global search (no schoolID filter). Used as a fallback for professors that
+# RMP has tagged with a USC sub-school different from our primary schoolID.
+# Result includes `school { name }` so we can filter to USC client-side.
+_SEARCH_QUERY_GLOBAL = """
+query SearchTeachersQuery($text: String!) {
+  newSearch {
+    teachers(query: {text: $text}) {
+      edges {
+        node {
+          id
+          firstName
+          lastName
+          avgRating
+          avgDifficulty
+          wouldTakeAgainPercent
+          numRatings
+          school { name }
+        }
+      }
+    }
+  }
+}
+"""
+
+USC_SCHOOL_NAME = "University of Southern California"
+
 
 def _decode_rmp_id(encoded_id: str) -> str:
     """'VGVhY2hlci0xMjM0NTY=' → '123456'"""
@@ -38,33 +64,50 @@ def _decode_rmp_id(encoded_id: str) -> str:
 
 def _best_match(edges: list[dict], professor_name: str) -> Optional[dict]:
     """
-    Pick the best-matching node from RMP results.
-    Scores: last-name match = 2 pts, first-name match = 1 pt.
-    Falls back to first result if nothing scores.
+    Pick the matching node from RMP results.
+
+    Strictness rules (to avoid mapping "Jason Webb" → "Sherry Webb"):
+    - Require an EXACT last-name match (not substring). "Webb" matches "Webb"
+      but not "Webber".
+    - When multiple candidates share the last name, require a first-name match
+      to disambiguate. Accepts the queried first name appearing as a token in
+      the RMP first-name field (handles middle names like "Erin M." vs "Erin").
+    - If we can't pick a unique match, return None so the caller surfaces a
+      "No ratings" pill instead of wrong data.
     """
     parts = professor_name.lower().split()
-    last = parts[-1] if parts else ""
+    if not parts:
+        return None
+    last = parts[-1]
     first = parts[0] if len(parts) > 1 else ""
 
-    best_node, best_score = None, 0
-    for edge in edges:
-        node = edge.get("node", {})
-        node_last = (node.get("lastName") or "").lower()
+    # Exact last-name candidates only.
+    last_matches = [
+        edge["node"]
+        for edge in edges
+        if (edge.get("node", {}).get("lastName") or "").lower() == last
+    ]
+
+    if not last_matches:
+        return None
+
+    if len(last_matches) == 1:
+        return last_matches[0]
+
+    # Multiple candidates: must disambiguate by first name.
+    if not first:
+        return None
+    for node in last_matches:
         node_first = (node.get("firstName") or "").lower()
+        if not node_first:
+            continue
+        # Match if RMP first name is an exact word match, a startswith on the
+        # search first name + space (e.g. "Erin M." starts with "erin "), or
+        # the queried first name appears as a token.
+        if node_first == first or node_first.startswith(first + " ") or first in node_first.split():
+            return node
 
-        score = 0
-        if last and last in node_last:
-            score += 2
-        if first and first in node_first:
-            score += 1
-
-        if score > best_score:
-            best_score = score
-            best_node = node
-
-    if best_node and best_score > 0:
-        return best_node
-    return edges[0]["node"] if edges else None
+    return None
 
 
 def _no_data() -> dict:
@@ -85,17 +128,16 @@ def _float_or_none(val) -> Optional[float]:
         return None
 
 
-async def fetch_rmp(professor_name: str, client: httpx.AsyncClient) -> dict:
-    """
-    Fetch RMP data for one professor at USC.
-    Returns a dict of rmp_* fields ready to apply to a Section.
-    Always returns something safe — never raises.
-    """
-    if not professor_name or professor_name == "TBA":
-        return _no_data()
+_RMP_HEADERS = {
+    "Authorization": RMP_AUTH,
+    "Content-Type": "application/json",
+    "Referer": "https://www.ratemyprofessors.com/",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+}
 
-    last_name = professor_name.strip().split()[-1]
 
+async def _search_usc(last_name: str, client: httpx.AsyncClient) -> list[dict]:
+    """Search the primary USC schoolID. Returns raw edges or []."""
     try:
         r = await client.post(
             RMP_ENDPOINT,
@@ -103,12 +145,39 @@ async def fetch_rmp(professor_name: str, client: httpx.AsyncClient) -> dict:
                 "query": _SEARCH_QUERY,
                 "variables": {"text": last_name, "schoolID": USC_SCHOOL_ID},
             },
-            headers={
-                "Authorization": RMP_AUTH,
-                "Content-Type": "application/json",
-                "Referer": "https://www.ratemyprofessors.com/",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            headers=_RMP_HEADERS,
+            timeout=10.0,
+        )
+        r.raise_for_status()
+        return (
+            r.json()
+            .get("data", {})
+            .get("newSearch", {})
+            .get("teachers", {})
+            .get("edges", [])
+        )
+    except Exception:
+        return []
+
+
+async def _search_global_usc(query_text: str, client: httpx.AsyncClient) -> list[dict]:
+    """
+    Search RMP globally (no schoolID filter) and keep only edges whose school
+    is "University of Southern California". Catches professors RMP has tagged
+    with a different USC school ID than our primary one.
+
+    RMP's global search caps results at ~10 entries by relevance, so we send
+    the full professor name (e.g. "Giovanni Rizzo") rather than just the last
+    name. Common surnames otherwise get drowned out by other schools.
+    """
+    try:
+        r = await client.post(
+            RMP_ENDPOINT,
+            json={
+                "query": _SEARCH_QUERY_GLOBAL,
+                "variables": {"text": query_text},
             },
+            headers=_RMP_HEADERS,
             timeout=10.0,
         )
         r.raise_for_status()
@@ -120,12 +189,43 @@ async def fetch_rmp(professor_name: str, client: httpx.AsyncClient) -> dict:
             .get("edges", [])
         )
     except Exception:
+        return []
+
+    return [
+        e for e in edges
+        if ((e.get("node", {}).get("school") or {}).get("name") or "") == USC_SCHOOL_NAME
+    ]
+
+
+async def fetch_rmp(professor_name: str, client: httpx.AsyncClient) -> dict:
+    """
+    Fetch RMP data for one professor at USC.
+    Returns a dict of rmp_* fields ready to apply to a Section.
+    Always returns something safe — never raises.
+
+    Two-tier search:
+    1. Primary: USC schoolID-filtered search by last name.
+    2. Fallback: global search filtered by school name = USC. Catches profs
+       (e.g., Erin Kaplan) RMP has tagged with a non-primary USC school ID.
+    """
+    if not professor_name or professor_name == "TBA":
         return _no_data()
 
-    if not edges:
-        return _no_data()
+    parts = professor_name.strip().split()
+    last_name = parts[-1]
+    first_name = parts[0] if len(parts) > 1 else ""
+    # The fallback search is global, so it needs a tight query to outrank
+    # same-last-name candidates from other schools.
+    fallback_query = f"{first_name} {last_name}".strip() if first_name else last_name
 
+    edges = await _search_usc(last_name, client)
     node = _best_match(edges, professor_name)
+
+    if not node:
+        # Try global → USC-filtered fallback with the full first+last name.
+        edges = await _search_global_usc(fallback_query, client)
+        node = _best_match(edges, professor_name)
+
     if not node:
         return _no_data()
 

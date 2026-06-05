@@ -170,11 +170,13 @@ input[type="range"]::-moz-range-thumb {
   box-shadow: 0 1px 4px rgba(153, 0, 0, 0.30);
 }
 
-/* Constraint sliders — cardinal fill track, white thumb with red ring */
+/* Constraint sliders — cardinal fill track, white thumb with red ring.
+   Hardware (track + thumb) matches DualTimeRangeSlider so every slider on
+   the input page reads as the same control. */
 input[type="range"].form-constraint-range {
   --fill-percent: 50%;
-  height: 4px;
-  border-radius: 2px;
+  height: 6px;
+  border-radius: 3px;
   background: linear-gradient(
     to right,
     var(--cardinal) 0%,
@@ -185,11 +187,11 @@ input[type="range"].form-constraint-range {
 }
 
 input[type="range"].form-constraint-range::-webkit-slider-thumb {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   background: #ffffff;
   border: 2px solid var(--cardinal);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
 input[type="range"].form-constraint-range::-webkit-slider-thumb:hover {
@@ -197,17 +199,17 @@ input[type="range"].form-constraint-range::-webkit-slider-thumb:hover {
 }
 
 input[type="range"].form-constraint-range::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   background: #ffffff;
   border: 2px solid var(--cardinal);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
 input[type="range"].form-constraint-range::-moz-range-progress {
   background: var(--cardinal);
-  height: 4px;
-  border-radius: 2px 0 0 2px;
+  height: 6px;
+  border-radius: 3px 0 0 3px;
 }
 
 /* Dual-handle time range (earliest / latest) */
@@ -505,7 +507,7 @@ input[type="range"].form-constraint-range::-moz-range-progress {
   transform: translateX(18px);
 }
 
-/* Loading pulse rings */
+/* Loading pulse rings (legacy — kept available for fallback) */
 .loading-pulse-ring {
   position: absolute;
   inset: 0;
@@ -520,6 +522,67 @@ input[type="range"].form-constraint-range::-moz-range-progress {
   20%  { opacity: 0.55; }
   100% { transform: scale(1);    opacity: 0; }
 }
+
+/* Loading screen — mini schedule + stepper */
+.loading-schedule-block {
+  opacity: 0;
+  transform: translateY(4px);
+  animation: schedule-block-in 360ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  will-change: opacity, transform;
+}
+
+@keyframes schedule-block-in {
+  from { opacity: 0;   transform: translateY(4px); }
+  to   { opacity: 0.9; transform: translateY(0);    }
+}
+
+.loading-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.4;
+  transition: color 200ms ease;
+}
+
+.loading-step-bullet {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1.5px solid var(--border-default);
+  background: transparent;
+  transition: background 200ms ease, border-color 200ms ease;
+}
+
+.loading-step-bullet--done {
+  background: transparent;
+  border-color: var(--cardinal);
+}
+
+.loading-step-bullet--active {
+  border-color: var(--cardinal);
+}
+
+.loading-step-bullet-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--cardinal);
+  animation: step-bullet-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes step-bullet-pulse {
+  0%, 100% { opacity: 0.35; }
+  50%      { opacity: 1;    }
+}
+
+.loading-step--pending .loading-step-label { color: var(--text-tertiary); }
+.loading-step--active  .loading-step-label { color: var(--text-primary); font-weight: 500; }
+.loading-step--done    .loading-step-label { color: var(--text-secondary); }
 
 /* Chip */
 .chip {

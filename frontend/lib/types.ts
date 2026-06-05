@@ -61,6 +61,7 @@ export interface CourseInputEntry {
   section_id?: string             // optional exact section pin
   category?: string               // e.g. "C" — required if type = "ge" (single)
   categories?: string[]           // e.g. ["C","D"] — for multi-GE double-count hunting
+  ge_code?: string                // optional specific course within the GE category
 }
 
 export interface Constraints {
@@ -186,10 +187,14 @@ export interface Schedule {
 export interface GenerateResponse {
   schedules: Schedule[]
   error: string | null
-  // Course code that still needs the user to pick a lecture/discussion combo.
+  // Course code that still needs the user to pick a linked-section combo.
   needs_linked_section_prompt: string | null
+  // Which linked-section type the user needs to choose right now. The backend
+  // surfaces one type at a time (discussion → lab → quiz, in that priority),
+  // skipping any type that has only one option.
+  prompt_type?: "discussion" | "lab" | "quiz" | null
   // Backend's raw shape: course_code -> list of per-lecture bundles.
-  // The frontend flattens this into DiscussionOption[] for the prompt UI.
+  // The frontend flattens this into LinkedSectionOption[] for the prompt UI.
   linked_section_options: Record<string, BundleOption[]>
 }
 

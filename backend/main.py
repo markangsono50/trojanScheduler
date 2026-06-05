@@ -230,17 +230,32 @@ async def generate(req: GenerateRequest):
             preferred_linked_section_ids=linked_prefs.get(code or ""),
         ))
 
-    ge_inputs = [
-        SolverCourseInput(
-            input_type=e.type,
-            category=e.category,
-            categories=e.categories,
-            professor=e.professor,
-            section_id=e.section_id,
-            ge_code=e.ge_code,
-        )
-        for e in req.must_haves + req.nice_to_haves if e.type == "ge"
-    ]
+    # GE entries from req.must_haves are required; ones from req.nice_to_haves
+    # are best-effort — the solver should silently skip them when no candidate
+    # fits, instead of dropping the whole must-have combination.
+    ge_inputs = []
+    for e in req.must_haves:
+        if e.type == "ge":
+            ge_inputs.append(SolverCourseInput(
+                input_type=e.type,
+                category=e.category,
+                categories=e.categories,
+                professor=e.professor,
+                section_id=e.section_id,
+                ge_code=e.ge_code,
+                is_optional=False,
+            ))
+    for e in req.nice_to_haves:
+        if e.type == "ge":
+            ge_inputs.append(SolverCourseInput(
+                input_type=e.type,
+                category=e.category,
+                categories=e.categories,
+                professor=e.professor,
+                section_id=e.section_id,
+                ge_code=e.ge_code,
+                is_optional=True,
+            ))
 
     nice_to_haves = []
     for e in req.nice_to_haves:

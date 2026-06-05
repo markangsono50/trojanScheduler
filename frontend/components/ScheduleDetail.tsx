@@ -592,7 +592,7 @@ function RMPLink({ course }: { course: CourseEntry }) {
       )}
       {course.would_take_again !== null && (
         <span style={{ opacity: 0.7, fontSize: 11, fontWeight: 500, letterSpacing: "0.02em" }}>
-          · {course.would_take_again}% retake
+          · {course.would_take_again.toFixed(2)}% retake
         </span>
       )}
     </a>

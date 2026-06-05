@@ -23,8 +23,11 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null)
   const [discussionPromptCourse, setDiscussionPromptCourse] = useState<string | null>(null)
   const [discussionOptions, setDiscussionOptions] = useState<DiscussionOption[]>([])
+  // Which linked-section type is currently being prompted ("discussion" | "lab" | "quiz").
+  // Tracked so the picker UI labels itself correctly and submits to the right key.
+  const [promptType, setPromptType] = useState<"discussion" | "lab" | "quiz">("discussion")
   const [pendingPayload, setPendingPayload] = useState<GenerateRequest | null>(null)
-  const [planningMode, setPlanningMode] = useState(false)
+  const [planningMode, setPlanningMode] = useState(true)
 
   const callGenerate = async (payload: GenerateRequest) => {
     setError(null)
@@ -45,14 +48,14 @@ export default function Home() {
       if (data.needs_linked_section_prompt) {
         const course = data.needs_linked_section_prompt
         const bundles = data.linked_section_options?.[course] ?? []
-        // Flatten lecture-keyed bundles into a single list of discussion
-        // options. Each option carries the lecture it came from so we can
-        // resubmit both ids together. Bundles whose options_by_type has no
-        // "discussion" type are skipped (lecture-only courses shouldn't have
-        // hit this path in the first place; if they do, the user has nothing
-        // to pick).
+        // The backend tells us which linked type to surface (discussion / lab /
+        // quiz). A type with only one option never gets prompted — the backend
+        // already auto-picks it. We flatten by THAT type so the picker shows
+        // the right options. Each option still carries its parent lecture so
+        // we can re-pin both ids on resubmit.
+        const ptype = data.prompt_type ?? "discussion"
         const flatOptions: DiscussionOption[] = bundles.flatMap((b) =>
-          (b.options_by_type?.discussion ?? []).map((d) => ({
+          (b.options_by_type?.[ptype] ?? []).map((d) => ({
             section_id: d.section_id,
             days: d.days,
             start_time: d.start_time,
@@ -67,6 +70,7 @@ export default function Home() {
             lecture_end_time: b.lecture_end_time,
           }))
         )
+        setPromptType(ptype)
         setDiscussionPromptCourse(course)
         setDiscussionOptions(flatOptions)
         setPendingPayload(payload)
@@ -90,7 +94,7 @@ export default function Home() {
   }
 
   const handleSubmit = (payload: GenerateRequest) => {
-    setPlanningMode(payload.planning_mode ?? false)
+    setPlanningMode(payload.planning_mode ?? true)
     setPendingPayload(payload)
     callGenerate(payload)
   }
@@ -99,12 +103,16 @@ export default function Home() {
     pref: Record<string, Record<string, string>>
   ) => {
     if (!pendingPayload) return
+    // Deep-merge per course so round 2 (lab pick) doesn't blow away round 1's
+    // discussion + lecture pins. Spread alone would replace the course value.
+    const existing = pendingPayload.linked_section_preferences ?? {}
+    const merged: Record<string, Record<string, string>> = { ...existing }
+    for (const [course, courseRef] of Object.entries(pref)) {
+      merged[course] = { ...(existing[course] ?? {}), ...courseRef }
+    }
     const updated: GenerateRequest = {
       ...pendingPayload,
-      linked_section_preferences: {
-        ...(pendingPayload.linked_section_preferences ?? {}),
-        ...pref,
-      },
+      linked_section_preferences: merged,
     }
     setDiscussionPromptCourse(null)
     callGenerate(updated)
@@ -155,6 +163,7 @@ export default function Home() {
         error={error}
         discussionPromptCourse={discussionPromptCourse}
         discussionOptions={discussionOptions}
+        promptType={promptType}
         onDiscussionPreference={handleDiscussionPreference}
       />
     )

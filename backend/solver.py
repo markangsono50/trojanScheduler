@@ -10,9 +10,26 @@ Sections:
 """
 
 from __future__ import annotations
+import copy
 from dataclasses import dataclass, field
 from itertools import product as _cart_product
 from typing import Optional
+
+
+# GE diversity knobs ---------------------------------------------------------
+# How many candidates to consider per GE slot when enumerating variants.
+GE_VARIANTS_PER_SLOT = 5
+# Per-combination cap on the cartesian product of GE picks (safety against
+# blowup with many GE slots).
+GE_VARIANTS_PER_COMBO_CAP = 40
+# Score penalty per shared GE course code when picking ranks 2/3 — soft, so a
+# clearly-better GE can still recur, but a tied alternative pulls ahead.
+DIVERSITY_PENALTY = 3.0
+
+# Linked-section prompt order — we surface a picker only for types that
+# actually have multiple distinct slots, walking this list in order so the
+# user picks discussion first (when applicable), then lab, then quiz.
+LINKED_PROMPT_PRIORITY = ["discussion", "lab", "quiz"]
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +164,9 @@ class CourseInput:
     categories: Optional[list[str]] = None # e.g. ["C","D"] — for multi-GE mode
 
     ge_code: Optional[str] = None                    # specific course within a GE category
+    # True for GE inputs that came from the user's optional list — these are
+    # best-effort: skip silently if no candidate fits the must-have schedule.
+    is_optional: bool = False
     # Shape: {"lecture_section_id": "...", "discussion": "...", "lab": "...", "quiz": "..."}
     preferred_linked_section_ids: Optional[dict] = None
 
@@ -219,28 +239,45 @@ class ScoringWeights:
 # ---------------------------------------------------------------------------
 
 def _to_minutes(t: str) -> int:
-    """Convert 'HH:MM' to minutes since midnight."""
+    """
+    Convert 'HH:MM' to minutes since midnight. Returns -1 for empty / malformed
+    strings — some online or arranged sections come back from the scraper
+    without a time, and callers treat -1 as "no time constraint applies."
+    """
+    if not t or ":" not in t:
+        return -1
     h, m = t.split(":")
     return int(h) * 60 + int(m)
+
+
+def _block_minutes(start_time: str, end_time: str) -> Optional[tuple[int, int]]:
+    """Return (start_min, end_min) for a block, or None if either is missing.
+    Callers should skip None — untimed sections contribute no gap/overlap."""
+    s, e = _to_minutes(start_time), _to_minutes(end_time)
+    if s < 0 or e < 0:
+        return None
+    return (s, e)
 
 
 def _section_in_time_window(section: Section, constraints: Constraints) -> bool:
     """Return True if section fits within the user's earliest/latest window."""
     earliest = _to_minutes(constraints.earliest_start)
     latest = _to_minutes(constraints.latest_end)
-    return (
-        _to_minutes(section.start_time) >= earliest and
-        _to_minutes(section.end_time) <= latest
-    )
+    start = _to_minutes(section.start_time)
+    end = _to_minutes(section.end_time)
+    if start < 0 or end < 0:
+        return True  # untimed (online/arranged) sections never violate
+    return start >= earliest and end <= latest
 
 
 def _linked_in_time_window(linked: LinkedSection, constraints: Constraints) -> bool:
     earliest = _to_minutes(constraints.earliest_start)
     latest = _to_minutes(constraints.latest_end)
-    return (
-        _to_minutes(linked.start_time) >= earliest and
-        _to_minutes(linked.end_time) <= latest
-    )
+    start = _to_minutes(linked.start_time)
+    end = _to_minutes(linked.end_time)
+    if start < 0 or end < 0:
+        return True
+    return start >= earliest and end <= latest
 
 
 def _modality_ok(section: Section, constraints: Constraints) -> bool:
@@ -350,7 +387,7 @@ def expand_to_pairs(
     constraints: Constraints,
     preferred_linked_section_ids: Optional[dict] = None,
     planning_mode: bool = False,
-) -> tuple[list[SectionPair], bool, list[BundleOption]]:
+) -> tuple[list[SectionPair], Optional[str], list[BundleOption]]:
     """
     Expand lecture sections into SectionPairs, where each pair bundles one
     lecture with one required linked section per type (e.g. one discussion
@@ -363,16 +400,21 @@ def expand_to_pairs(
       picking across types within one bundle is guaranteed to share a lecture.
 
     Prompt logic:
-    - Fires when there are 2+ schedulable bundles (multiple professor choices),
-      OR any single required type within a bundle has 2+ distinct time slots
-      (covers single-professor courses with multiple discussion times).
+    - Only fires for a linked type if that type has 2+ distinct time slots
+      across the still-eligible bundles AND the user hasn't already pinned it.
+    - Walks LINKED_PROMPT_PRIORITY in order so the user picks discussion first
+      (when applicable), then lab, then quiz. A subsequent round resolves the
+      remaining promptable types.
+    - A type with only one option is auto-picked silently (no prompt).
 
     preferred_linked_section_ids shape (when set):
       {"lecture_section_id": "...", "discussion": "...", "lab": "...", "quiz": "..."}
       Lectures not matching lecture_section_id are skipped entirely.
 
     Returns:
-      (pairs, needs_prompt, bundle_options)
+      (pairs, prompt_type, bundle_options)
+      prompt_type is None when no prompt is needed; otherwise it names the
+      linked-section type the caller should surface to the user.
     """
     pairs: list[SectionPair] = []
     bundles: list[BundleOption] = []
@@ -452,38 +494,38 @@ def expand_to_pairs(
         for combo in _cart_product(*type_groups):
             pairs.append(SectionPair(lecture=section, linked_sections=list(combo)))
 
-    # Prompt trigger: multiple bundles to choose between, OR any type within
-    # a bundle has 2+ distinct time slots. Suppress if the user has already
-    # pinned a lecture AND every type in the chosen bundle.
-    needs_prompt = False
-    if not pinned_lecture_id:
-        if len(bundles) >= 2:
-            needs_prompt = True
-        else:
-            for bundle in bundles:
-                for stype, options in bundle.options_by_type.items():
-                    distinct = {(tuple(ls.days), ls.start_time) for ls in options}
-                    if len(distinct) >= 2:
-                        needs_prompt = True
-                        break
-                if needs_prompt:
-                    break
-    elif preferred_linked_section_ids:
-        # Lecture is pinned; check whether every required type also has a pin
-        chosen_bundles = [b for b in bundles if b.lecture_section_id == pinned_lecture_id]
-        for bundle in chosen_bundles:
-            for stype in bundle.options_by_type.keys():
-                if not preferred_linked_section_ids.get(stype):
-                    needs_prompt = True
-                    break
+    # Prompt only for types that actually offer a choice:
+    #   - If the user has pinned a lecture, restrict to that bundle.
+    #   - For each linked type (walked in LINKED_PROMPT_PRIORITY), count
+    #     distinct section ids across eligible bundles. ≥2 ⇒ promptable.
+    #   - Pre-pinned types are skipped.
+    #   - When the user has not pinned a lecture but two+ bundles share a
+    #     single common slot for every type (different lecturers / same
+    #     discussion time), the first promptable type still surfaces so the
+    #     user can choose the lecturer through their linked pick.
+    prompt_type: Optional[str] = None
+    eligible_bundles = bundles
+    if pinned_lecture_id:
+        eligible_bundles = [b for b in bundles if b.lecture_section_id == pinned_lecture_id]
 
-    return pairs, needs_prompt, bundles
+    for stype in LINKED_PROMPT_PRIORITY:
+        if preferred_linked_section_ids and preferred_linked_section_ids.get(stype):
+            continue
+        slot_ids: set[str] = set()
+        for bundle in eligible_bundles:
+            for ls in bundle.options_by_type.get(stype, []):
+                slot_ids.add(ls.section_id)
+        if len(slot_ids) >= 2:
+            prompt_type = stype
+            break
+
+    return pairs, prompt_type, bundles
 
 
 def needs_linked_section_prompt(sections: list[Section], constraints: Constraints) -> bool:
     """Returns True if the user must be prompted to pick linked-section times."""
-    _, prompt, _ = expand_to_pairs(sections, constraints, preferred_linked_section_ids=None)
-    return prompt
+    _, prompt_type, _ = expand_to_pairs(sections, constraints, preferred_linked_section_ids=None)
+    return prompt_type is not None
 
 
 # ---------------------------------------------------------------------------
@@ -502,6 +544,8 @@ def _times_overlap(
     """
     s_a, e_a = _to_minutes(start_a), _to_minutes(end_a)
     s_b, e_b = _to_minutes(start_b), _to_minutes(end_b)
+    if min(s_a, e_a, s_b, e_b) < 0:
+        return False  # untimed section — treat like online: no time conflict
     return s_a < e_b + buffer_mins and s_b < e_a + buffer_mins
 
 
@@ -568,6 +612,7 @@ class SolverResult:
         self.conflict_pairs: list[tuple[str, str]] = []
         self.linked_section_options: dict[str, list[BundleOption]] = {}  # course_code → bundles
         self.needs_linked_section_prompt: Optional[str] = None  # course_code
+        self.prompt_type: Optional[str] = None  # "discussion" | "lab" | "quiz"
 
 
 def _find_conflicting_pair(
@@ -761,7 +806,7 @@ def resolve_must_haves(
             continue
 
         # Expand to pairs
-        pairs, needs_prompt, options = expand_to_pairs(
+        pairs, prompt_type, options = expand_to_pairs(
             filtered,
             constraints,
             preferred_linked_section_ids=course_input.preferred_linked_section_ids,
@@ -773,33 +818,31 @@ def resolve_must_haves(
             result.errors.append(msg)
             continue
 
-        # Prompt strategy:
-        # - First round (no discussion pick yet): auto-pick the top bundle by
-        #   lecture RMP and prompt the user to choose ONLY among that
-        #   professor's discussion times. This is the "if the program selected
-        #   Lars Perner, the discussion should be led by Lars too" rule.
-        # - Second round (user has picked a discussion): override the prompt
-        #   trigger and let the backtracker explore all bundles. The bundle
-        #   containing the user's discussion is naturally restricted to that
-        #   one pair; other bundles contribute alternative schedules so the
-        #   top-3 ends up with diverse lecturers.
-        # A user "decision" is anything other than None — either a specific
-        # discussion pin {"discussion": "..."} or an explicit "no preference"
-        # signal (an empty dict {}). Both should suppress the prompt; only the
-        # discussion pin triggers the rank-1 promotion downstream.
-        has_user_decision = course_input.preferred_linked_section_ids is not None
-        if needs_prompt and not has_user_decision:
-            if len(options) > 1:
-                section_by_id = {s.section_id: s for s in filtered}
+        # Prompt strategy (one linked type at a time, walked by priority):
+        # - No prior preferences (None): prompt and narrow to top-RMP bundle so
+        #   the user sees only one lecturer's options. Their first pick
+        #   implicitly chooses that lecturer.
+        # - Empty preferences ({}): "no preference" signal from the user —
+        #   never prompt again, let the backtracker explore everything.
+        # - Non-empty preferences: honor the pins, and re-prompt for any
+        #   remaining promptable type the user hasn't decided on.
+        if prompt_type is not None:
+            prefs = course_input.preferred_linked_section_ids
+            no_pref_signal = prefs is not None and len(prefs) == 0
+            if not no_pref_signal:
+                already_pinned = prefs is not None and prefs.get("lecture_section_id")
+                if not already_pinned and len(options) > 1:
+                    section_by_id = {s.section_id: s for s in filtered}
 
-                def _bundle_rmp(b: BundleOption) -> float:
-                    sec = section_by_id.get(b.lecture_section_id)
-                    return sec.rmp_score if sec else 0.0
+                    def _bundle_rmp(b: BundleOption) -> float:
+                        sec = section_by_id.get(b.lecture_section_id)
+                        return sec.rmp_score if sec else 0.0
 
-                options = [max(options, key=_bundle_rmp)]
-            result.needs_linked_section_prompt = course_code
-            result.linked_section_options[course_code] = options
-            continue
+                    options = [max(options, key=_bundle_rmp)]
+                result.needs_linked_section_prompt = course_code
+                result.prompt_type = prompt_type
+                result.linked_section_options[course_code] = options
+                continue
 
         groups.append(pairs)
 
@@ -832,6 +875,65 @@ def resolve_must_haves(
 # 5. GE AUTO-SELECTION (post must-have backtracking)
 # ---------------------------------------------------------------------------
 
+def rank_ge_candidates(
+    candidates: list[Section],
+    placed: list[SectionPair],
+    constraints: Constraints,
+    ge_slot: str,
+    ge_input: "CourseInput",
+    rmp_cap: int = 10,
+    planning_mode: bool = False,
+) -> tuple[list[SectionPair], Optional[str]]:
+    """
+    Return every GE pair that fits the placed schedule, ranked by RMP score
+    descending and deduplicated on section_id. Empty list + error string if
+    nothing qualifies.
+
+    ge_input carries optional narrowing fields:
+      ge_code    → restrict to a specific course within the category
+      professor  → pin to a specific professor
+      section_id → pin to an exact section
+    """
+    buffer_mins = 0 if planning_mode else (10 if constraints.no_back_to_back else 0)
+
+    if ge_input.ge_code:
+        candidates = [s for s in candidates if s.course.upper() == ge_input.ge_code.upper()]
+        if not candidates:
+            return [], f"No sections of {ge_input.ge_code} found for {ge_slot}."
+
+    filtered, error = filter_and_pin_sections(
+        candidates,
+        ge_input,
+        constraints,
+        rmp_cap,
+        planning_mode=planning_mode,
+    )
+    if error or not filtered:
+        return [], f"No valid courses found for {ge_slot}."
+
+    pairs, _, _ = expand_to_pairs(filtered, constraints, planning_mode=planning_mode)
+    if not pairs:
+        return [], f"No valid courses found for {ge_slot}."
+
+    seen_ids: set[str] = set()
+    ranked: list[SectionPair] = []
+    for pair in sorted(pairs, key=lambda p: p.lecture.rmp_score, reverse=True):
+        if pair.lecture.section_id not in seen_ids:
+            seen_ids.add(pair.lecture.section_id)
+            ranked.append(pair)
+
+    placed_courses = {p.lecture.course for p in placed}
+    valid = [
+        p for p in ranked
+        if p.lecture.course not in placed_courses
+        and not pair_conflicts_with_any(p, placed, buffer_mins)
+    ]
+    if not valid:
+        return [], f"All available courses for {ge_slot} conflict with your schedule."
+
+    return valid, None
+
+
 def auto_select_ge(
     candidates: list[Section],
     placed: list[SectionPair],
@@ -843,66 +945,20 @@ def auto_select_ge(
     planning_mode: bool = False,
 ) -> tuple[Optional[SectionPair], list[SectionPair], Optional[str]]:
     """
-    From a list of GE candidate sections, pick the highest-RMP pair
-    that doesn't conflict with already-placed pairs.
-
-    ge_input carries optional narrowing fields:
-      ge_code    → restrict to a specific course within the category
-      professor  → pin to a specific professor
-      section_id → pin to an exact section
-
-    Returns:
-      (selected_pair, runner_ups, error_message)
-      error_message is None if selection succeeded.
+    Thin wrapper over rank_ge_candidates that returns the legacy
+    (selected, runner_ups, error) shape. Retained for back-compat with any
+    caller that still wants greedy single-pick behavior.
     """
-    buffer_mins = 0 if planning_mode else (10 if constraints.no_back_to_back else 0)
-
-    # Narrow by specific course code within the GE category
-    if ge_input.ge_code:
-        candidates = [s for s in candidates if s.course.upper() == ge_input.ge_code.upper()]
-        if not candidates:
-            return None, [], f"No sections of {ge_input.ge_code} found for {ge_slot}."
-
-    # Filter candidates (applies professor + section_id pins from ge_input)
-    filtered, error = filter_and_pin_sections(
-        candidates,
-        ge_input,
-        constraints,
-        rmp_cap,
-        planning_mode=planning_mode,
+    ranked, error = rank_ge_candidates(
+        candidates, placed, constraints, ge_slot, ge_input,
+        rmp_cap=rmp_cap, planning_mode=planning_mode,
     )
-    if error or not filtered:
-        return None, [], f"No valid courses found for {ge_slot}."
+    if error or not ranked:
+        return None, [], error
 
-    # Expand to pairs
-    pairs, _, _ = expand_to_pairs(filtered, constraints, planning_mode=planning_mode)
-    if not pairs:
-        return None, [], f"No valid courses found for {ge_slot}."
+    selected = ranked[0]
+    runner_ups = ranked[1: 1 + runner_up_count]
 
-    # Sort by RMP descending, deduplicate by section_id
-    seen_ids: set[str] = set()
-    ranked: list[SectionPair] = []
-    for pair in sorted(pairs, key=lambda p: p.lecture.rmp_score, reverse=True):
-        if pair.lecture.section_id not in seen_ids:
-            seen_ids.add(pair.lecture.section_id)
-            ranked.append(pair)
-
-    # Exclude courses already in the schedule — prevents a must-have course from
-    # doubling as a GE filler, and prevents the same course filling two GE slots.
-    placed_courses = {p.lecture.course for p in placed}
-    valid = [
-        p for p in ranked
-        if p.lecture.course not in placed_courses
-        and not pair_conflicts_with_any(p, placed, buffer_mins)
-    ]
-
-    if not valid:
-        return None, [], f"All available courses for {ge_slot} conflict with your schedule."
-
-    selected = valid[0]
-    runner_ups = valid[1: 1 + runner_up_count]
-
-    # Tag the selected pair
     selected.lecture.entry_type = "ge"
     selected.lecture.ge_slot = ge_slot
     selected.lecture.is_double_count = len(selected.lecture.ge_categories) >= 2
@@ -1017,17 +1073,16 @@ def _score_gaps(schedule: list[SectionPair]) -> float:
     day_blocks: dict[str, list[tuple[int, int]]] = {}  # day -> [(start_min, end_min)]
 
     for pair in schedule:
-        for day in pair.lecture.days:
-            day_blocks.setdefault(day, []).append((
-                _to_minutes(pair.lecture.start_time),
-                _to_minutes(pair.lecture.end_time),
-            ))
+        lec_block = _block_minutes(pair.lecture.start_time, pair.lecture.end_time)
+        if lec_block is not None:
+            for day in pair.lecture.days:
+                day_blocks.setdefault(day, []).append(lec_block)
         for ls in pair.linked_sections:
+            ls_block = _block_minutes(ls.start_time, ls.end_time)
+            if ls_block is None:
+                continue
             for day in ls.days:
-                day_blocks.setdefault(day, []).append((
-                    _to_minutes(ls.start_time),
-                    _to_minutes(ls.end_time),
-                ))
+                day_blocks.setdefault(day, []).append(ls_block)
 
     total_gap = 0
     transition_count = 0
@@ -1133,15 +1188,16 @@ def _count_planning_violations(
     if constraints.no_back_to_back:
         per_day: dict[str, list[tuple[int, int]]] = {}
         for pair in schedule:
-            for day in pair.lecture.days:
-                per_day.setdefault(day, []).append(
-                    (_to_minutes(pair.lecture.start_time), _to_minutes(pair.lecture.end_time))
-                )
+            lec_block = _block_minutes(pair.lecture.start_time, pair.lecture.end_time)
+            if lec_block is not None:
+                for day in pair.lecture.days:
+                    per_day.setdefault(day, []).append(lec_block)
             for ls in pair.linked_sections:
+                ls_block = _block_minutes(ls.start_time, ls.end_time)
+                if ls_block is None:
+                    continue
                 for day in ls.days:
-                    per_day.setdefault(day, []).append(
-                        (_to_minutes(ls.start_time), _to_minutes(ls.end_time))
-                    )
+                    per_day.setdefault(day, []).append(ls_block)
         for blocks in per_day.values():
             ordered = sorted(blocks, key=lambda b: b[0])
             for i in range(len(ordered) - 1):
@@ -1230,17 +1286,16 @@ def compute_schedule_metadata(schedule: list[SectionPair]) -> dict:
     # Total gap minutes
     day_blocks: dict[str, list[tuple[int, int]]] = {}
     for pair in schedule:
-        for day in pair.lecture.days:
-            day_blocks.setdefault(day, []).append((
-                _to_minutes(pair.lecture.start_time),
-                _to_minutes(pair.lecture.end_time),
-            ))
+        lec_block = _block_minutes(pair.lecture.start_time, pair.lecture.end_time)
+        if lec_block is not None:
+            for day in pair.lecture.days:
+                day_blocks.setdefault(day, []).append(lec_block)
         for ls in pair.linked_sections:
+            ls_block = _block_minutes(ls.start_time, ls.end_time)
+            if ls_block is None:
+                continue
             for day in ls.days:
-                day_blocks.setdefault(day, []).append((
-                    _to_minutes(ls.start_time),
-                    _to_minutes(ls.end_time),
-                ))
+                day_blocks.setdefault(day, []).append(ls_block)
 
     total_gap = 0
     for blocks in day_blocks.values():
@@ -1409,6 +1464,48 @@ def _deduplicate(
     return result
 
 
+def _ge_course_set(schedule: list[SectionPair]) -> set[str]:
+    """Set of GE course codes in a schedule. Used by the diversity picker."""
+    return {
+        p.lecture.course for p in schedule
+        if p.lecture.entry_type == "ge"
+    }
+
+
+def _diversity_aware_top_n(
+    pool: list[tuple[float, list[SectionPair]]],
+    top_n: int,
+    penalty: float = DIVERSITY_PENALTY,
+) -> list[tuple[float, list[SectionPair]]]:
+    """
+    Pick top_n schedules from a dedup pool, applying a soft penalty for GE
+    courses already chosen by higher-ranked picks. The first pick is always
+    the highest-score schedule; subsequent picks maximize
+    `score - penalty * overlap_with_already_chosen_GE_courses`.
+
+    A clearly-better schedule still wins even with overlap; tied alternatives
+    pull ahead when they offer a fresh GE course.
+    """
+    if not pool:
+        return []
+    remaining = sorted(pool, key=lambda x: x[0], reverse=True)
+    picked: list[tuple[float, list[SectionPair]]] = [remaining.pop(0)]
+    chosen_ge_courses: set[str] = set(_ge_course_set(picked[0][1]))
+
+    while len(picked) < top_n and remaining:
+        def adjusted(item: tuple[float, list[SectionPair]]) -> float:
+            score, sched = item
+            overlap = len(_ge_course_set(sched) & chosen_ge_courses)
+            return score - penalty * overlap
+
+        next_pick = max(remaining, key=adjusted)
+        remaining.remove(next_pick)
+        picked.append(next_pick)
+        chosen_ge_courses.update(_ge_course_set(next_pick[1]))
+
+    return picked
+
+
 # ---------------------------------------------------------------------------
 # 12. TOP-LEVEL ORCHESTRATOR
 # ---------------------------------------------------------------------------
@@ -1525,6 +1622,7 @@ def build_schedules(
             "schedules": [],
             "error": None,
             "needs_linked_section_prompt": course_code,
+            "prompt_type": solver_result.prompt_type,
             "linked_section_options": {course_code: serialized_bundles},
         }
 
@@ -1546,73 +1644,126 @@ def build_schedules(
         }
 
     # --- Step 3: GE selection + nice-to-haves + scoring ---
+    # For each must-have combination, enumerate up to K candidates per GE slot,
+    # cartesian-product them into variants, prune GE↔GE conflicts, then score
+    # each. This is what unlocks GE diversity across the top-N — the old code
+    # greedily picked the single best GE per slot, so ranks 2/3 inherited the
+    # same picks as rank 1.
     scored: list[tuple[float, list[SectionPair]]] = []
+    buffer_mins = 0 if planning_mode else (10 if constraints.no_back_to_back else 0)
+
+    def _slot_for(ge_input: CourseInput) -> tuple[str, list[Section]]:
+        """Resolve display name + candidate pool for one GE input."""
+        if ge_input.categories:
+            name = "Category " + " + ".join(ge_input.categories)
+            pool: list[Section] = []
+            seen_ids: set[str] = set()
+            for cat in ge_input.categories:
+                for sec in ge_candidates.get(f"Category {cat}", []):
+                    if sec.section_id not in seen_ids:
+                        pool.append(sec)
+                        seen_ids.add(sec.section_id)
+            return name, pool
+        return f"Category {ge_input.category}", ge_candidates.get(f"Category {ge_input.category}", [])
+
+    def _materialize_ge(
+        pair: SectionPair,
+        slot_name: str,
+        runner_ups: list[SectionPair],
+    ) -> SectionPair:
+        """
+        Shallow-copy the chosen pair's Section so per-variant metadata
+        (ge_slot, runner_ups, entry_type) doesn't leak across variants that
+        share the same underlying Section instance.
+        """
+        new_lecture = copy.copy(pair.lecture)
+        new_lecture.entry_type = "ge"
+        new_lecture.ge_slot = slot_name
+        new_lecture.is_double_count = len(new_lecture.ge_categories) >= 2
+        new_lecture.runner_ups = runner_ups
+        return SectionPair(lecture=new_lecture, linked_sections=list(pair.linked_sections))
 
     for combination in solver_result.combinations:
-        schedule = list(combination)
+        # 3a. Rank candidates for each GE slot against this must-have combination.
+        # Required GE: failure drops the combination. Optional GE: failure
+        # silently skips that slot (matches nice-to-have semantics).
+        per_slot_ranked: list[list[SectionPair]] = []
+        slot_names: list[str] = []
         ge_errors: list[str] = []
-
-        # Auto-select each GE slot
         for ge_input in ge_inputs:
-            # Build slot name for display
-            if ge_input.categories:
-                slot_name = "Category " + " + ".join(ge_input.categories)
-                # Union of all candidate sections across requested categories
-                candidates = []
-                seen_ids: set[str] = set()
-                for cat in ge_input.categories:
-                    for sec in ge_candidates.get(f"Category {cat}", []):
-                        if sec.section_id not in seen_ids:
-                            candidates.append(sec)
-                            seen_ids.add(sec.section_id)
-            else:
-                slot_name = f"Category {ge_input.category}"
-                candidates = ge_candidates.get(slot_name, [])
+            slot_name, candidates = _slot_for(ge_input)
+            ranked, error = rank_ge_candidates(
+                candidates, combination, constraints, slot_name,
+                ge_input=ge_input, rmp_cap=rmp_cap, planning_mode=planning_mode,
+            )
+            if error or not ranked:
+                if ge_input.is_optional:
+                    continue
+                ge_errors.append(error or f"No valid courses for {slot_name}.")
+                break
+            slot_names.append(slot_name)
+            per_slot_ranked.append(ranked[:GE_VARIANTS_PER_SLOT])
 
-            selected, runner_ups, error = auto_select_ge(
-                candidates,
+        if ge_errors:
+            continue
+
+        # 3b. Enumerate cartesian variants. If there are no GE slots, run once
+        # with an empty combo so existing logic (nice-to-haves, scoring) still
+        # fires.
+        variant_iter = _cart_product(*per_slot_ranked) if per_slot_ranked else [()]
+        variants_built = 0
+        for ge_combo in variant_iter:
+            if variants_built >= GE_VARIANTS_PER_COMBO_CAP:
+                break
+
+            # Prune GE↔GE conflicts (high-ranked picks across slots can still
+            # overlap in time).
+            ge_conflict = False
+            for i in range(len(ge_combo)):
+                for j in range(i + 1, len(ge_combo)):
+                    if ge_combo[i].lecture.course == ge_combo[j].lecture.course:
+                        ge_conflict = True
+                        break
+                    if pair_conflicts_with_pair(ge_combo[i], ge_combo[j], buffer_mins):
+                        ge_conflict = True
+                        break
+                if ge_conflict:
+                    break
+            if ge_conflict:
+                continue
+
+            # Build the schedule for this variant. Each GE pair is materialized
+            # via a Section copy so per-variant metadata (runner_ups, ge_slot)
+            # is independent.
+            schedule = list(combination)
+            for i, chosen in enumerate(ge_combo):
+                runner_ups = [
+                    p for p in per_slot_ranked[i]
+                    if p.lecture.section_id != chosen.lecture.section_id
+                ][:4]
+                schedule.append(_materialize_ge(chosen, slot_names[i], runner_ups))
+
+            schedule = inject_nice_to_haves(
                 schedule,
+                nice_to_have_inputs,
+                all_sections,
                 constraints,
-                slot_name,
-                ge_input=ge_input,
-                runner_up_count=4,
-                rmp_cap=rmp_cap,
+                constraints.max_units,
+                rmp_cap,
                 planning_mode=planning_mode,
             )
 
-            if error:
-                ge_errors.append(error)
+            total_units = sum(p.lecture.units for p in schedule)
+            if total_units > constraints.max_units:
+                continue
+
+            final_score = score_schedule(schedule, weights, constraints, planning_mode)
+            scored.append((final_score, schedule))
+            variants_built += 1
+
+            if len(scored) >= max_combinations:
                 break
 
-            # Attach runner_ups to the selected section for frontend swap panel
-            selected.lecture.runner_ups = runner_ups
-            schedule.append(selected)
-
-        if ge_errors:
-            # This combination couldn't fill all GE slots — skip it
-            continue
-
-        # Inject nice-to-haves (best-effort, silent skip)
-        schedule = inject_nice_to_haves(
-            schedule,
-            nice_to_have_inputs,
-            all_sections,
-            constraints,
-            constraints.max_units,
-            rmp_cap,
-            planning_mode=planning_mode,
-        )
-
-        # Final unit cap check
-        total_units = sum(p.lecture.units for p in schedule)
-        if total_units > constraints.max_units:
-            continue
-
-        # Score
-        final_score = score_schedule(schedule, weights, constraints, planning_mode)
-        scored.append((final_score, schedule))
-
-        # Early exit — we have more than enough to pick top N from
         if len(scored) >= max_combinations:
             break
 
@@ -1628,7 +1779,11 @@ def build_schedules(
             "linked_section_options": {},
         }
 
-    top = _deduplicate(scored, top_n)
+    # Build a wider dedup pool, then apply diversity-aware top-N selection so
+    # ranks 2 and 3 favor schedules with different GE courses than rank 1
+    # (soft penalty — clearly-better schedules still win even with overlap).
+    pool = _deduplicate(scored, max(top_n * 4, top_n))
+    top = _diversity_aware_top_n(pool, top_n)
 
     # --- Step 4b: Promote any user-pinned discussion to the top ---
     # If the user explicitly picked a discussion via the linked-section prompt,

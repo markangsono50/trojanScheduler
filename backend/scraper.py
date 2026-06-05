@@ -84,7 +84,12 @@ def extract_sections(course: dict) -> list[dict]:
     - Within a group, "Lecture" (or Seminar/Activity) sections are primary.
     - "Discussion" / "Lab" / "Quiz" sections are secondary — the student must
       pick one secondary per group alongside the primary.
-    - Sections with isCancelled=True or isFull=True are excluded.
+    - Some courses (e.g. EE 141) split a single shared Discussion off into its
+      own linkCode while the labs share the lecture's linkCode. Those orphan
+      secondaries get attached to every primary lecture in the course so the
+      solver doesn't mistake the orphan for a standalone lecture and pick it
+      as a tiny phantom "EE 141" section.
+    - Sections with isCancelled=True are excluded.
     """
     raw_sections = course.get("sections") or []
 
@@ -96,25 +101,41 @@ def extract_sections(course: dict) -> list[dict]:
         link_code = sec.get("linkCode") or "NONE"
         link_groups.setdefault(link_code, []).append(sec)
 
-    result = []
+    # Split groups into "has a real lecture" vs "secondaries only" (orphans).
+    primary_groups: list[tuple[str, list, list]] = []  # (link_code, primaries, own_secondaries)
+    orphan_secondaries: list = []
     for link_code, secs in link_groups.items():
-        primaries   = [s for s in secs if s.get("rnrMode") in LECTURE_MODES]
+        primaries = [s for s in secs if s.get("rnrMode") in LECTURE_MODES]
         secondaries = [s for s in secs if s.get("rnrMode") not in LECTURE_MODES]
+        if primaries:
+            primary_groups.append((link_code, primaries, secondaries))
+        else:
+            orphan_secondaries.extend(secondaries)
 
-        # Standalone courses (no distinct lecture type): treat all as primary
-        if not primaries:
-            primaries   = secs
-            secondaries = []
+    result = []
 
+    if not primary_groups:
+        # Course has no lecture-mode section anywhere — treat every remaining
+        # section as a standalone primary (lecture-less seminars, etc.).
+        for link_code, secs in link_groups.items():
+            for primary in secs:
+                section = _parse_section(primary)
+                section["link_code"] = link_code
+                section["ge_categories"] = []
+                section["linked_sections"] = []
+                result.append(section)
+        return result
+
+    # Normal case: each primary becomes a bundle with its own secondaries plus
+    # any course-wide orphan secondaries.
+    for link_code, primaries, own_secondaries in primary_groups:
         for primary in primaries:
             section = _parse_section(primary)
             section["link_code"] = link_code
             section["ge_categories"] = []  # populated by ge_finder.py
-
             section["linked_sections"] = [
-                _parse_section(s) for s in secondaries
+                _parse_section(s) for s in (own_secondaries + orphan_secondaries)
             ]
-
             result.append(section)
 
     return result

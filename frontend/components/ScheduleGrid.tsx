@@ -251,11 +251,10 @@ function CourseBlock({
     ? nameLastFirst(course.professor)
     : ""
 
-  // Adaptive content based on block height (heightPct is fraction of full
-  // grid). Thresholds chosen so 50min discussions show code+name (no time)
-  // while 1+ hour lectures show all three rows.
-  const showProf = Boolean(prof) && heightPct > (isLarge ? 0.045 : 0.055)
-  const showTime = heightPct > (isLarge ? 0.075 : 0.085)
+  // Adaptive content based on block height. Same thresholds in both modes
+  // since we render the same content hierarchy regardless of grid size.
+  const showProf = Boolean(prof) && heightPct > 0.045
+  const showTime = heightPct > 0.075
 
   return (
     <div
@@ -268,7 +267,7 @@ function CourseBlock({
         background: bg,
         color: fg,
         borderRadius: radius,
-        padding: isLarge ? "9px 12px" : "5px 7px",
+        padding: isLarge ? "9px 12px" : "6px 9px",
         overflow: "hidden",
         boxShadow: isDC
           ? "0 1px 0 rgba(0,0,0,0.15) inset, 0 2px 6px rgba(240,180,0,0.25)"
@@ -284,7 +283,7 @@ function CourseBlock({
         style={{
           fontSize: isLarge ? 15 : 12,
           fontWeight: 700,
-          letterSpacing: isLarge ? "0.02em" : "0.03em",
+          letterSpacing: "0.02em",
           lineHeight: 1.1,
           whiteSpace: "nowrap",
           overflow: "hidden",
@@ -347,11 +346,19 @@ function LinkedBlock({
 }) {
   const top = pos(section.start_time)
   const heightPct = pos(section.end_time) - top
-  const baseColor = colorFor(course.course)
+
+  // Full color matching the parent lecture — same treatment as CourseBlock,
+  // so discussions / labs / quizzes read as siblings of the lecture rather
+  // than faded satellites. The text content "{COURSE} {Type}" tells them
+  // apart visually.
+  const bg = colorFor(course.course)
+  const fg = "#ffffff"
+  const fgFaded = "rgba(255,255,255,0.82)"
 
   const typeLabel = titleCase(section.section_type)
+  const codeAndType = `${course.course} ${typeLabel}`
   const timeRange = `${fmt(section.start_time)} - ${fmt(section.end_time)}`
-  const showTime = heightPct > (isLarge ? 0.055 : 0.065)
+  const showTime = heightPct > 0.075
 
   return (
     <div
@@ -361,31 +368,31 @@ function LinkedBlock({
         right: 2,
         top: `${top * 100}%`,
         height: `${Math.max(heightPct * 100, isLarge ? 4 : 3)}%`,
-        background: `${baseColor}1F`,
-        color: baseColor,
-        border: `1px solid ${baseColor}55`,
+        background: bg,
+        color: fg,
         borderRadius: radius,
-        padding: isLarge ? "7px 10px" : "5px 7px",
+        padding: isLarge ? "9px 12px" : "6px 9px",
         overflow: "hidden",
+        boxShadow: "0 1px 0 rgba(0,0,0,0.15) inset, 0 2px 4px rgba(0,0,0,0.08)",
         display: "flex",
         flexDirection: "column",
-        justifyContent: "center",
-        gap: isLarge ? 2 : 1,
+        justifyContent: "flex-start",
+        gap: isLarge ? 3 : 2,
       }}
     >
-      {/* Course code + type */}
+      {/* Course code + type — matches the lecture block's typography */}
       <div
         style={{
-          fontSize: isLarge ? 13 : 11,
+          fontSize: isLarge ? 15 : 12,
           fontWeight: 700,
-          letterSpacing: "0.03em",
+          letterSpacing: "0.02em",
           lineHeight: 1.1,
           whiteSpace: "nowrap",
           overflow: "hidden",
           textOverflow: "ellipsis",
         }}
       >
-        {isLarge ? `${course.course} ${typeLabel}` : typeLabel}
+        {codeAndType}
       </div>
 
       {/* Time */}
@@ -393,10 +400,10 @@ function LinkedBlock({
         <div
           style={{
             fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-            fontSize: isLarge ? 10 : 9,
-            fontWeight: 500,
-            opacity: 0.85,
+            fontSize: isLarge ? 11 : 9,
+            color: fgFaded,
             lineHeight: 1,
+            marginTop: isLarge ? 2 : 0,
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",

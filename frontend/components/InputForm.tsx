@@ -19,7 +19,7 @@ import {
 } from "@/lib/types"
 import LeftPanel from "./LeftPanel"
 
-const GE_CATEGORIES = ["A", "B", "C", "D", "E", "F", "G", "H"]
+const GE_CATEGORIES = ["A", "B", "C", "D", "E", "F", "G", "H", "GESM"]
 
 const GE_CATEGORY_LABELS: Record<string, string> = {
   A: "The Arts",
@@ -30,6 +30,7 @@ const GE_CATEGORY_LABELS: Record<string, string> = {
   F: "Quantitative Reasoning",
   G: "Global Perspectives I",
   H: "Global Perspectives II",
+  GESM: "General Education Seminar",
 }
 
 const TIME_MIN_MINUTES = 7 * 60
@@ -67,6 +68,9 @@ interface Props {
   error: string | null
   discussionPromptCourse: string | null
   discussionOptions: DiscussionOption[]
+  // Which linked-section type the picker is currently asking about. The same
+  // UI handles discussion, lab, and quiz prompts — the backend tells us which.
+  promptType: "discussion" | "lab" | "quiz"
   onDiscussionPreference: (pref: Record<string, Record<string, string>>) => void
 }
 
@@ -128,6 +132,7 @@ function entryFilled(e: Entry): boolean {
 
 function pillLabel(e: Entry): string {
   if (e.type === "ge") {
+    if (e.category === "GESM") return "GESM"
     if (e.category) return `GE ${e.category}`
     return "GE"
   }
@@ -148,6 +153,22 @@ function useCourses() {
       .catch(() => {})
   }, [])
   return courses
+}
+
+// GE-tagged courses, keyed by category letter. Loaded once and cached.
+type GeCourseMap = Record<string, { code: string; title: string }[]>
+let _cachedGeCourses: GeCourseMap | null = null
+
+function useGeCourses() {
+  const [data, setData] = useState<GeCourseMap>(_cachedGeCourses ?? {})
+  useEffect(() => {
+    if (_cachedGeCourses !== null) { setData(_cachedGeCourses); return }
+    fetch("/ge_courses.json")
+      .then((r) => r.json())
+      .then((d: GeCourseMap) => { _cachedGeCourses = d; setData(d) })
+      .catch(() => {})
+  }, [])
+  return data
 }
 
 // ── Course options (professors + time slots) ───────────────────────────────────
@@ -322,12 +343,16 @@ function DeptCourseSearchInput({
   value: string
   onChange: (v: string) => void
   onCommitCourse: (code: string) => void
-  onCommitGE: (category: string) => void
+  onCommitGE: (category: string, geCode?: string) => void
   placeholder: string
 }) {
   const courses = useCourses()
+  const geCourses = useGeCourses()
   const [open, setOpen] = useState(false)
   const [geExpanded, setGeExpanded] = useState(false)
+  // When set, the GE drill-down is showing the per-category course list
+  // (third level of navigation: Requirements → Category → Class).
+  const [selectedGeCategory, setSelectedGeCategory] = useState<string | null>(null)
   const [selectedDept, setSelectedDept] = useState<string | null>(null)
   const [hiIdx, setHiIdx] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -371,20 +396,25 @@ function DeptCourseSearchInput({
         .slice(0, 10)
     : []
 
-  const panel: "dept-browser" | "dept-courses" | "course-search" =
-    selectedDept !== null ? "dept-courses"
-    : typedCourseSearch   ? "course-search"
+  const panel: "dept-browser" | "dept-courses" | "course-search" | "ge-categories" | "ge-courses" =
+    selectedDept !== null      ? "dept-courses"
+    : selectedGeCategory !== null ? "ge-courses"
+    : geExpanded               ? "ge-categories"
+    : typedCourseSearch        ? "course-search"
     : "dept-browser"
 
   const navItems =
     panel === "dept-courses" ? deptCourses :
     panel === "course-search" ? globalSuggestions :
+    panel === "ge-categories" ? GE_CATEGORIES.map((c) => ({ code: c, title: GE_CATEGORY_LABELS[c] })) :
+    panel === "ge-courses" && selectedGeCategory ? (geCourses[selectedGeCategory] || []) :
     filteredDepts
 
   const closeAll = () => {
     setOpen(false)
     setSelectedDept(null)
     setGeExpanded(false)
+    setSelectedGeCategory(null)
   }
 
   const commitCourse = (code: string) => {
@@ -401,6 +431,30 @@ function DeptCourseSearchInput({
 
   const goBack = () => {
     setSelectedDept(null)
+    onChange("")
+    setHiIdx(0)
+  }
+
+  // GE drill-down: enter category list, enter a specific category, step back.
+  const drillIntoGE = () => {
+    setGeExpanded(true)
+    setSelectedGeCategory(null)
+    onChange("")
+    setHiIdx(0)
+  }
+  const drillIntoGeCategory = (cat: string) => {
+    setSelectedGeCategory(cat)
+    onChange("")
+    setHiIdx(0)
+  }
+  const backFromGeCourses = () => {
+    setSelectedGeCategory(null)
+    onChange("")
+    setHiIdx(0)
+  }
+  const backFromGeCategories = () => {
+    setGeExpanded(false)
+    setSelectedGeCategory(null)
     onChange("")
     setHiIdx(0)
   }
@@ -482,6 +536,12 @@ function DeptCourseSearchInput({
             } else if (panel === "course-search") {
               if (globalSuggestions[hiIdx]) commitCourse(globalSuggestions[hiIdx].code)
               else if (value.trim()) commitCourse(value.trim().toUpperCase())
+            } else if (panel === "ge-categories") {
+              const cat = GE_CATEGORIES[hiIdx]
+              if (cat) drillIntoGeCategory(cat)
+            } else if (panel === "ge-courses" && selectedGeCategory) {
+              const list = geCourses[selectedGeCategory] || []
+              if (list[hiIdx]) { onCommitGE(selectedGeCategory, list[hiIdx].code); onChange(""); closeAll() }
             } else {
               if (filteredDepts[hiIdx]) drillIntoDept(filteredDepts[hiIdx])
               else if (value.trim()) commitCourse(value.trim().toUpperCase())
@@ -489,10 +549,13 @@ function DeptCourseSearchInput({
           } else if (e.key === "Escape") {
             e.preventDefault()
             if (selectedDept !== null) goBack()
+            else if (selectedGeCategory !== null) backFromGeCourses()
+            else if (geExpanded) backFromGeCategories()
             else closeAll()
-          } else if (e.key === "Backspace" && !value && selectedDept !== null) {
-            e.preventDefault()
-            goBack()
+          } else if (e.key === "Backspace" && !value) {
+            if (selectedDept !== null) { e.preventDefault(); goBack() }
+            else if (selectedGeCategory !== null) { e.preventDefault(); backFromGeCourses() }
+            else if (geExpanded) { e.preventDefault(); backFromGeCategories() }
           }
         }}
       />
@@ -539,56 +602,31 @@ function DeptCourseSearchInput({
               : globalSuggestions.map(courseRow)
           )}
 
-          {/* ── Dept browser ────────────────────────────── */}
+          {/* ── Dept browser (departments + GE Requirements row at top) ── */}
           {panel === "dept-browser" && (
             <>
-              {/* GE pinned at top */}
-              <div style={{ position: "sticky", top: 0, background: "var(--bg-card)", zIndex: 1, borderBottom: "1px solid var(--border-subtle)" }}>
-                <button
-                  type="button"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => setGeExpanded((v) => !v)}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 6,
-                    width: "100%", textAlign: "left", padding: "7px 10px",
-                    background: geExpanded ? "rgba(255,204,0,0.08)" : "transparent",
-                    border: "none", cursor: "pointer",
-                  }}
-                >
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={drillIntoGE}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  width: "100%", textAlign: "left", padding: "7px 10px",
+                  background: "rgba(255,204,0,0.06)",
+                  borderBottom: "1px solid var(--border-subtle)",
+                  border: "none", cursor: "pointer",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,204,0,0.14)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,204,0,0.06)")}
+              >
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <PinIcon />
                   <span style={{ fontSize: 12, fontWeight: 700, color: "#8A6D00", fontFamily: "monospace", letterSpacing: "0.03em" }}>GE</span>
                   <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginLeft: 2 }}>GE Requirements</span>
-                  <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-tertiary)" }}>{geExpanded ? "▴" : "▾"}</span>
-                </button>
-                {geExpanded && (
-                  <div style={{ background: "rgba(255,204,0,0.03)" }}>
-                    {GE_CATEGORIES.map((cat) => (
-                      <button
-                        key={cat}
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => { onCommitGE(cat); onChange(""); closeAll() }}
-                        style={{
-                          display: "flex", alignItems: "center", gap: 8,
-                          width: "100%", textAlign: "left", padding: "5px 10px 5px 26px",
-                          border: "none", background: "transparent", cursor: "pointer",
-                        }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,204,0,0.14)")}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                      >
-                        <span style={{ fontSize: 12, fontWeight: 700, color: "#8A6D00", fontFamily: "monospace", letterSpacing: "0.03em", minWidth: 18 }}>
-                          {cat}
-                        </span>
-                        <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
-                          {GE_CATEGORY_LABELS[cat]}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+                </span>
+                <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>▶</span>
+              </button>
 
-              {/* Dept list */}
               {filteredDepts.length === 0
                 ? <div style={{ padding: "10px 12px", fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>No departments match</div>
                 : filteredDepts.map((dept, i) => (
@@ -615,6 +653,137 @@ function DeptCourseSearchInput({
             </>
           )}
 
+          {/* ── GE categories list (after clicking "GE Requirements") ── */}
+          {panel === "ge-categories" && (
+            <>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={backFromGeCategories}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  width: "100%", textAlign: "left", padding: "7px 10px",
+                  borderBottom: "1px solid var(--border-subtle)",
+                  background: "transparent", border: "none", cursor: "pointer",
+                  fontSize: 11, color: "var(--text-tertiary)",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-subtle, #f9f9f9)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+              >
+                <span style={{ fontSize: 12 }}>◀</span>
+                <span>All departments</span>
+              </button>
+
+              {GE_CATEGORIES.map((cat, i) => {
+                const count = (geCourses[cat] || []).length
+                return (
+                  <button
+                    key={cat}
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => drillIntoGeCategory(cat)}
+                    onMouseEnter={() => setHiIdx(i)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 8,
+                      width: "100%", textAlign: "left", padding: "7px 10px",
+                      background: i === hiIdx ? "rgba(255,204,0,0.14)" : "transparent",
+                      border: "none", cursor: "pointer",
+                    }}
+                  >
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#8A6D00", fontFamily: "monospace", letterSpacing: "0.03em", minWidth: 22 }}>
+                      {cat}
+                    </span>
+                    <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+                      {GE_CATEGORY_LABELS[cat]}
+                    </span>
+                    <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-tertiary)" }}>
+                      {count} classes ▶
+                    </span>
+                  </button>
+                )
+              })}
+            </>
+          )}
+
+          {/* ── GE class list (after clicking a category) ───────── */}
+          {panel === "ge-courses" && selectedGeCategory && (
+            <>
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={backFromGeCourses}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  width: "100%", textAlign: "left", padding: "7px 10px",
+                  borderBottom: "1px solid var(--border-subtle)",
+                  background: "transparent", border: "none", cursor: "pointer",
+                  fontSize: 11, color: "var(--text-tertiary)",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-subtle, #f9f9f9)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+              >
+                <span style={{ fontSize: 12 }}>◀</span>
+                <span>All GE categories</span>
+              </button>
+
+              {/* Auto Pick — commits as the whole category (no specific class).
+                  Pill on the form shows just "GE F". */}
+              <button
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => { onCommitGE(selectedGeCategory); onChange(""); closeAll() }}
+                style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  width: "100%", textAlign: "left", padding: "9px 12px",
+                  background: "rgba(255,204,0,0.08)",
+                  borderBottom: "1px solid rgba(255,204,0,0.20)",
+                  border: "none", cursor: "pointer",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,204,0,0.18)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,204,0,0.08)")}
+              >
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#8A6D00", fontFamily: "monospace", letterSpacing: "0.03em", minWidth: 22 }}>
+                  {selectedGeCategory}
+                </span>
+                <span style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>Auto Pick</span>
+                  <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+                    Let the program choose a {GE_CATEGORY_LABELS[selectedGeCategory]} class
+                  </span>
+                </span>
+              </button>
+
+              {(geCourses[selectedGeCategory] || []).map((c, i) => (
+                <button
+                  key={c.code}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => { onCommitGE(selectedGeCategory, c.code); onChange(""); closeAll() }}
+                  onMouseEnter={() => setHiIdx(i)}
+                  style={{
+                    display: "flex", alignItems: "baseline", gap: 10,
+                    width: "100%", textAlign: "left", padding: "6px 12px",
+                    background: i === hiIdx ? "rgba(153,0,0,0.06)" : "transparent",
+                    border: "none", cursor: "pointer",
+                  }}
+                >
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", fontFamily: "monospace", letterSpacing: "0.03em", minWidth: 70 }}>
+                    {c.code}
+                  </span>
+                  <span style={{ fontSize: 11, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {c.title}
+                  </span>
+                </button>
+              ))}
+
+              {(geCourses[selectedGeCategory] || []).length === 0 && (
+                <div style={{ padding: "12px 12px", fontSize: 11, fontStyle: "italic", color: "var(--text-tertiary)" }}>
+                  No classes found for this category.
+                </div>
+              )}
+            </>
+          )}
+
         </div>
       )}
     </div>
@@ -626,6 +795,7 @@ export default function InputForm({
   error,
   discussionPromptCourse,
   discussionOptions,
+  promptType,
   onDiscussionPreference,
 }: Props) {
   const [mustHaves, setMustHaves] = useState<Entry[]>([])
@@ -639,7 +809,7 @@ export default function InputForm({
   const [convSlider, setConvSlider] = useState(0.5)
   const [showDaysOff, setShowDaysOff] = useState(false)
   const [rankingsOpen, setRankingsOpen] = useState(false)
-  const [planningMode, setPlanningMode] = useState(false)
+  const [planningMode, setPlanningMode] = useState(true)
 
   const updateEntry = (
     list: Entry[],
@@ -668,7 +838,14 @@ export default function InputForm({
         section_id: e.section_id.trim() || undefined,
       }
     }
-    return { type: "ge", category: e.category || undefined }
+    return {
+      type: "ge",
+      category: e.category || undefined,
+      // entry.code, when set on a GE entry, is the user-picked specific
+      // course inside that category. Submit it as ge_code so the backend's
+      // auto_select_ge restricts that GE slot to this exact course.
+      ge_code: e.code.trim().toUpperCase().replace(/-/g, " ") || undefined,
+    }
   }
 
   const handleSubmit = () => {
@@ -708,15 +885,15 @@ export default function InputForm({
     setDraftNice("")
   }
 
-  const commitGEMust = (category: string) => {
+  const commitGEMust = (category: string, geCode?: string) => {
     if (mustHaves.length >= 6) return
-    setMustHaves((prev) => [...prev, { ...newEntry(), type: "ge", category }])
+    setMustHaves((prev) => [...prev, { ...newEntry(), type: "ge", category, code: geCode ?? "" }])
     setDraftMust("")
   }
 
-  const commitGENice = (category: string) => {
+  const commitGENice = (category: string, geCode?: string) => {
     if (niceToHaves.length >= 4) return
-    setNiceToHaves((prev) => [...prev, { ...newEntry(), type: "ge", category }])
+    setNiceToHaves((prev) => [...prev, { ...newEntry(), type: "ge", category, code: geCode ?? "" }])
     setDraftNice("")
   }
 
@@ -735,17 +912,19 @@ export default function InputForm({
     }))
   }, [])
 
-  // ── discussion prompt ──────────────────────────────────────────────────────
+  // ── linked-section prompt ──────────────────────────────────────────────────
+  // Same UI handles discussion / lab / quiz — the type is driven by promptType.
 
   if (discussionPromptCourse) {
+    const typeLabel = promptType.charAt(0).toUpperCase() + promptType.slice(1)
     return (
       <div style={{ display: "flex", minHeight: "100vh" }}>
         <LeftPanel currentStep={1} />
         <div style={{ marginLeft: "22.222%", width: "77.778%", minHeight: "100vh", backgroundColor: "var(--bg-page)", display: "flex", alignItems: "center", justifyContent: "center", padding: "48px" }}>
           <div style={{ maxWidth: 520, width: "100%" }}>
             {/* Header — surfaces the system-selected lecturer so the link
-                between "discussion options shown" and "lecturer chosen" is
-                explicit. Falls back to a generic header if no options yet. */}
+                between "options shown" and "lecturer chosen" is explicit.
+                Falls back to a generic header if no options yet. */}
             <div style={{ textAlign: "center", marginBottom: 28 }}>
               <p
                 style={{
@@ -758,10 +937,10 @@ export default function InputForm({
                   marginBottom: 14,
                 }}
               >
-                Step 02 / Discussion
+                Step 02 / {typeLabel}
               </p>
               <h3 style={{ fontFamily: "'DM Serif Display', serif", color: "var(--text-primary)", fontSize: 32, marginBottom: 12, letterSpacing: "-0.01em", lineHeight: 1.05 }}>
-                Pick a discussion time.
+                Pick a {promptType} time.
               </h3>
               {discussionOptions.length > 0 ? (
                 <>
@@ -772,7 +951,7 @@ export default function InputForm({
                     </span>
                     {" "}for{" "}
                     <span style={{ fontWeight: 600, color: "var(--cardinal)" }}>{discussionPromptCourse}</span>
-                    . All discussion options below pair with their lecture.
+                    . All {promptType} options below pair with their lecture.
                   </p>
                   <div
                     style={{
@@ -796,7 +975,7 @@ export default function InputForm({
               ) : (
                 <p style={{ color: "var(--text-secondary)", fontSize: 14, lineHeight: 1.6 }}>
                   <span style={{ fontWeight: 600, color: "var(--cardinal)" }}>{discussionPromptCourse}</span>
-                  {" "}has multiple discussion sections.
+                  {" "}has multiple {promptType} sections.
                 </p>
               )}
             </div>
@@ -845,7 +1024,7 @@ export default function InputForm({
                   </span>
                 </div>
                 <p style={{ fontSize: 12, marginTop: 6, color: "var(--text-secondary)", lineHeight: 1.5 }}>
-                  Show the three highest-scoring schedules across all lecturers and discussion times.
+                  Show the three highest-scoring schedules across all lecturers and {promptType} times.
                 </p>
               </button>
 
@@ -877,7 +1056,12 @@ export default function InputForm({
                     key={`${opt.lecture_section_id}-${opt.section_id}`}
                     onClick={() =>
                       onDiscussionPreference({
-                        [discussionPromptCourse]: { discussion: opt.section_id },
+                        [discussionPromptCourse]: {
+                          // Pin the lecture too so a later prompt round (e.g.
+                          // lab after discussion) stays on the same professor.
+                          lecture_section_id: opt.lecture_section_id,
+                          [promptType]: opt.section_id,
+                        },
                       })
                     }
                     style={{ width: "100%", textAlign: "left", padding: "12px 16px", borderRadius: 12, border: `1.5px solid ${borderColor}`, backgroundColor: bgColor, color: "var(--text-primary)", cursor: "pointer", transition: "border-color 0.15s" }}
@@ -901,7 +1085,7 @@ export default function InputForm({
 
               {discussionOptions.length === 0 && (
                 <p style={{ textAlign: "center", padding: "24px 0", fontSize: 14, color: "var(--text-tertiary)" }}>
-                  No discussion options available.
+                  No {promptType} options available.
                 </p>
               )}
             </div>
@@ -926,7 +1110,7 @@ export default function InputForm({
           {/* Planning Mode — global mode switch, top right */}
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginBottom: 20 }}>
             <div className="flex items-center gap-2">
-              <span style={{ fontSize: 11, color: planningMode ? "var(--cardinal)" : "var(--text-tertiary)", transition: "color 0.2s", userSelect: "none" as const }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: planningMode ? "var(--cardinal)" : "var(--text-tertiary)", transition: "color 0.2s", userSelect: "none" as const }}>
                 Planning Mode
               </span>
               <button
@@ -970,10 +1154,10 @@ export default function InputForm({
           {/* Required courses */}
           <section style={{ marginBottom: 28 }}>
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 16 }}>
-              <h2 style={{ margin: 0, fontFamily: "Inter, sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" as const, color: "var(--text-tertiary)" }}>
+              <h2 style={{ margin: 0, fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase" as const, color: "var(--text-secondary)" }}>
                 Required courses
               </h2>
-              <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{mustHaves.length}/6</span>
+              <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontVariantNumeric: "tabular-nums" }}>{mustHaves.length}/6</span>
             </div>
             <CourseEntryBlock
               entries={mustHaves}
@@ -999,10 +1183,10 @@ export default function InputForm({
           {/* Optional courses */}
           <section style={{ marginBottom: 28 }}>
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 16 }}>
-              <h2 style={{ margin: 0, fontFamily: "Inter, sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" as const, color: "var(--text-tertiary)" }}>
+              <h2 style={{ margin: 0, fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase" as const, color: "var(--text-secondary)" }}>
                 Optional courses
               </h2>
-              <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{niceToHaves.length}/4</span>
+              <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontVariantNumeric: "tabular-nums" }}>{niceToHaves.length}/4</span>
             </div>
             {niceToHaves.filter(entryFilled).length === 0 &&
               !niceToHaves.some((e) => !entryFilled(e)) &&
@@ -1034,7 +1218,7 @@ export default function InputForm({
 
           {/* Class window */}
           <section style={{ marginBottom: 28 }}>
-            <h2 style={{ margin: "0 0 20px", fontFamily: "Inter, sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" as const, color: "var(--text-tertiary)" }}>
+            <h2 style={{ margin: "0 0 16px", fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase" as const, color: "var(--text-secondary)" }}>
               Class window
             </h2>
 
@@ -1044,7 +1228,7 @@ export default function InputForm({
                 latestIdx={latestIdx}
                 onChange={applyTimeRangeIndices}
               />
-              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4, fontSize: 11, color: "var(--text-tertiary)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 11, color: "var(--text-tertiary)" }}>
                 <span>Earliest start</span>
                 <span>Latest end</span>
               </div>
@@ -1052,8 +1236,8 @@ export default function InputForm({
 
             <div style={{ marginBottom: 24 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text-primary)" }}>Max units</span>
-                <span style={{ fontSize: 13, fontWeight: 700, color: "var(--cardinal)" }}>{constraints.max_units}</span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>Max units</span>
+                <span style={{ fontSize: 12, fontWeight: 700, color: "var(--cardinal)", fontVariantNumeric: "tabular-nums" }}>{constraints.max_units}</span>
               </div>
               <input
                 type="range"
@@ -1065,7 +1249,7 @@ export default function InputForm({
                 onChange={(e) => setConstraints((c) => ({ ...c, max_units: Number(e.target.value) }))}
                 style={{ ["--fill-percent" as string]: `${fillUnits}%` }}
               />
-              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4, fontSize: 11, color: "var(--text-tertiary)" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 11, color: "var(--text-tertiary)" }}>
                 <span>8</span>
                 <span>20</span>
               </div>
@@ -1094,7 +1278,7 @@ export default function InputForm({
                 }}
               >
                 <div>
-                  <p style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>Days off</p>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>Days off</p>
                   <p style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>Pick days you want completely free</p>
                 </div>
                 <div className="toggle shrink-0 pointer-events-none" style={{ backgroundColor: showDaysOff ? "var(--cardinal)" : "var(--border-default)" }}>
@@ -1145,7 +1329,7 @@ export default function InputForm({
                 }}
               >
                 <div>
-                  <p style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>No back-to-back</p>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", margin: 0 }}>No back-to-back</p>
                   <p style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>Require gaps between classes</p>
                 </div>
                 <div className="toggle shrink-0 pointer-events-none" style={{ backgroundColor: constraints.no_back_to_back ? "var(--cardinal)" : "var(--border-default)" }}>
@@ -1165,7 +1349,7 @@ export default function InputForm({
               onClick={() => setRankingsOpen((o) => !o)}
               aria-expanded={rankingsOpen}
             >
-              <h2 style={{ margin: 0, fontFamily: "Inter, sans-serif", fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" as const, color: "var(--text-tertiary)" }}>
+              <h2 style={{ margin: 0, fontFamily: "Inter, sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: "0.10em", textTransform: "uppercase" as const, color: "var(--text-secondary)" }}>
                 Fine-tune rankings
               </h2>
               <span className={`form-disclosure-chevron ${rankingsOpen ? "is-open" : ""}`} aria-hidden>
@@ -1173,7 +1357,7 @@ export default function InputForm({
               </span>
             </button>
             {rankingsOpen && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 20, paddingTop: 20 }}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 24, paddingTop: 16 }}>
                 <SliderRow
                   label="Professor Quality"
                   hint="Prioritizes sections with higher RateMyProfessor scores"
@@ -1301,7 +1485,7 @@ function DualTimeRangeSlider({
     height: 6,
     marginTop: -3,
     borderRadius: 3,
-    background: "#d4d4d4",
+    background: "#E0E0E0",
     zIndex: 0,
   }
   const fillStyle: CSSProperties = {
@@ -1335,11 +1519,11 @@ function DualTimeRangeSlider({
 
   return (
     <div className="dual-range">
-      <div className="flex items-center justify-between mb-1.5">
-        <span className="text-xs font-bold tabular-nums" style={{ color: "var(--cardinal)" }}>
+      <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "var(--cardinal)", fontVariantNumeric: "tabular-nums" }}>
           {startLabel}
         </span>
-        <span className="text-xs font-bold tabular-nums" style={{ color: "var(--cardinal)" }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "var(--cardinal)", fontVariantNumeric: "tabular-nums" }}>
           {endLabel}
         </span>
       </div>
@@ -1349,7 +1533,7 @@ function DualTimeRangeSlider({
         style={{
           position: "relative",
           width: "100%",
-          minHeight: 20,
+          height: 16,
           touchAction: "none",
           userSelect: "none",
         }}
@@ -1441,7 +1625,7 @@ function CourseEntryBlock({
   draftPlaceholder: string
   onCommitDraft: () => void
   onCommitCode: (code: string) => void
-  onCommitGE: (category: string) => void
+  onCommitGE: (category: string, geCode?: string) => void
   updateEntry: (list: Entry[], setList: (l: Entry[]) => void, id: number, patch: Partial<Entry>) => void
   removeEntry: (list: Entry[], setList: (l: Entry[]) => void, id: number) => void
 }) {
@@ -1687,17 +1871,225 @@ function EntryEditor({
       )}
 
       {entry.type === "ge" && (
-        <select
-          value={entry.category}
-          onChange={(e) => updateEntry(list, setList, entry.id, { category: e.target.value })}
+        <>
+          <select
+            value={entry.category}
+            onChange={(e) =>
+              // Reset any picked specific course when the category changes
+              // (the previous pick won't belong to the new category).
+              updateEntry(list, setList, entry.id, { category: e.target.value, code: "" })
+            }
+          >
+            <option value="">Select GE category…</option>
+            {GE_CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {c === "GESM" ? "GESM" : `GE ${c}`} · {GE_CATEGORY_LABELS[c]}
+              </option>
+            ))}
+          </select>
+
+          {entry.category && (
+            <div style={{ marginTop: 10 }}>
+              <label
+                style={{
+                  display: "block",
+                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: "0.15em",
+                  textTransform: "uppercase",
+                  color: "var(--text-tertiary)",
+                  marginBottom: 6,
+                }}
+              >
+                Specific class (optional)
+              </label>
+              <GeCourseDropdown
+                category={entry.category}
+                value={entry.code}
+                onChange={(code) => updateEntry(list, setList, entry.id, { code })}
+              />
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+// ── GE-specific-course dropdown ──────────────────────────────────────────────
+// Searchable list of all courses tagged with the chosen GE category.
+// Default is "Any course in GE X" (empty value → backend auto-picks the best
+// scoring option). User can pick one to lock that GE slot to a specific course.
+
+function GeCourseDropdown({
+  category,
+  value,
+  onChange,
+}: {
+  category: string
+  value: string
+  onChange: (code: string) => void
+}) {
+  const geCourses = useGeCourses()
+  const list = geCourses[category] ?? []
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState("")
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) {
+        setOpen(false)
+        setSearch("")
+      }
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [])
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return list
+    const q = search.trim().toUpperCase()
+    return list.filter(
+      (c) => c.code.toUpperCase().includes(q) || c.title.toUpperCase().includes(q)
+    )
+  }, [list, search])
+
+  const selected = list.find((c) => c.code === value)
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: "100%",
+          textAlign: "left",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 4,
+          padding: "8px 12px",
+          fontSize: 13,
+          border: "1px solid var(--border-default)",
+          borderRadius: 8,
+          background: "white",
+          cursor: "pointer",
+          color: selected ? "var(--text-primary)" : "var(--text-tertiary)",
+        }}
+      >
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {selected ? `${selected.code}  ·  ${selected.title}` : `Any course in ${category === "GESM" ? "GESM" : `GE ${category}`}`}
+        </span>
+        <span style={{ flexShrink: 0, color: "var(--text-tertiary)", fontSize: 11 }}>▾</span>
+      </button>
+
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 4px)",
+            left: 0,
+            right: 0,
+            zIndex: 9999,
+            background: "white",
+            border: "1px solid var(--border-default)",
+            borderRadius: 8,
+            boxShadow: "0 4px 16px rgba(0,0,0,0.14)",
+            maxHeight: 320,
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+          }}
         >
-          <option value="">Select GE category…</option>
-          {GE_CATEGORIES.map((c) => (
-            <option key={c} value={c}>
-              GE {c} · {GE_CATEGORY_LABELS[c]}
-            </option>
-          ))}
-        </select>
+          <div style={{ padding: 8, borderBottom: "1px solid var(--border-subtle)" }}>
+            <input
+              autoFocus
+              type="text"
+              placeholder={`Search ${list.length} course${list.length === 1 ? "" : "s"}…`}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "6px 8px",
+                fontSize: 13,
+                border: "1px solid var(--border-default)",
+                borderRadius: 6,
+                background: "white",
+                outline: "none",
+              }}
+            />
+          </div>
+
+          <div style={{ overflowY: "auto", maxHeight: 260 }}>
+            <div
+              onClick={() => {
+                onChange("")
+                setOpen(false)
+                setSearch("")
+              }}
+              style={{
+                padding: "8px 12px",
+                fontSize: 13,
+                cursor: "pointer",
+                color: value === "" ? "var(--text-primary)" : "var(--text-secondary)",
+                fontWeight: value === "" ? 600 : 400,
+                borderBottom: "1px solid var(--border-subtle)",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-subtle, #f9f9f9)")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            >
+              Any course in {category === "GESM" ? "GESM" : `GE ${category}`}
+            </div>
+
+            {filtered.length === 0 ? (
+              <div style={{ padding: "16px 12px", fontSize: 12, color: "var(--text-tertiary)", textAlign: "center" }}>
+                No matches.
+              </div>
+            ) : (
+              filtered.map((c) => {
+                const isSelected = c.code === value
+                return (
+                  <div
+                    key={c.code}
+                    onClick={() => {
+                      onChange(c.code)
+                      setOpen(false)
+                      setSearch("")
+                    }}
+                    style={{
+                      padding: "8px 12px",
+                      fontSize: 13,
+                      cursor: "pointer",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 2,
+                      background: isSelected ? "rgba(153,0,0,0.06)" : "transparent",
+                      fontWeight: isSelected ? 600 : 400,
+                      color: "var(--text-primary)",
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = isSelected
+                        ? "rgba(153,0,0,0.10)"
+                        : "var(--bg-subtle, #f9f9f9)"
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = isSelected ? "rgba(153,0,0,0.06)" : "transparent"
+                    }}
+                  >
+                    <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12, color: "var(--text-primary)" }}>
+                      {c.code}
+                    </span>
+                    <span style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.3 }}>
+                      {c.title}
+                    </span>
+                  </div>
+                )
+              })
+            )}
+          </div>
+        </div>
       )}
     </div>
   )
@@ -1721,13 +2113,13 @@ function SliderRow({
   const fill = value * 100
   return (
     <div>
-      <div className="flex items-center justify-between mb-0.5">
-        <span className="text-xs font-medium" style={{ color: "var(--text-primary)" }}>{label}</span>
-        <span className="text-[11px] font-mono font-bold tabular-nums" style={{ color: "var(--cardinal)" }}>
+      <div className="flex items-center justify-between" style={{ marginBottom: 4 }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)" }}>{label}</span>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "var(--cardinal)", fontVariantNumeric: "tabular-nums" }}>
           {Math.round(value * 100)}%
         </span>
       </div>
-      <p className="text-[11px] mb-1 leading-snug" style={{ color: "var(--text-tertiary)" }}>{hint}</p>
+      <p style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 8, lineHeight: 1.4 }}>{hint}</p>
       <input
         type="range"
         className="form-constraint-range"
@@ -1738,7 +2130,7 @@ function SliderRow({
         onChange={(e) => onChange(Number(e.target.value))}
         style={{ ["--fill-percent" as string]: `${fill}%` }}
       />
-      <div className="flex justify-between text-[11px] mt-0.5 leading-none" style={{ color: "var(--text-tertiary)" }}>
+      <div className="flex justify-between" style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 6, lineHeight: 1 }}>
         <span>{leftLabel}</span>
         <span>{rightLabel}</span>
       </div>

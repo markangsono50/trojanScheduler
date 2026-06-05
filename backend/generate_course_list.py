@@ -69,9 +69,11 @@ async def main():
                 if not prefix or not number:
                     continue
                 code = f"{prefix} {number}"
+                units_raw = c.get("courseUnits") or []
+                units = units_raw[0] if units_raw else None
                 if code not in seen:
                     seen.add(code)
-                    courses.append({"code": code, "title": title})
+                    courses.append({"code": code, "title": title, "units": units})
 
         courses.sort(key=lambda c: c["code"])
         print(f"\nTotal unique courses: {len(courses)}")

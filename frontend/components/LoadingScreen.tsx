@@ -144,6 +144,7 @@ export default function LoadingScreen() {
             listStyle: "none",
             padding: 0,
             margin: 0,
+            paddingTop: 24,
             display: "flex",
             flexDirection: "column",
             gap: 10,
@@ -189,7 +190,7 @@ export default function LoadingScreen() {
       </div>
 
       {/* Progress bar */}
-      <div className="w-full mt-10" style={{ maxWidth: 640 }}>
+      <div className="w-full" style={{ maxWidth: 640, marginTop: 24 }}>
         <div
           style={{
             height: 2,

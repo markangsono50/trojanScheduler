@@ -22,7 +22,17 @@
       "Bash(npx tsc *)",
       "Bash(python -c \"import main; print\\('OK'\\)\")",
       "Bash(npm install *)",
-      "Bash(node -e \"const fm = require\\('framer-motion'\\); console.log\\(typeof fm.motion.create\\)\")"
+      "Bash(node -e \"const fm = require\\('framer-motion'\\); console.log\\(typeof fm.motion.create\\)\")",
+      "Bash(uvicorn main:app --reload --port 8000)",
+      "Bash(npm run *)",
+      "Bash(echo \"PID: $!\")",
+      "Bash(curl *)",
+      "Bash(kill 22413)",
+      "Read(//usr/local/**)",
+      "Read(//opt/homebrew/bin/**)",
+      "Bash(python3.11 *)",
+      "Bash(xargs kill -9)",
+      "Bash(kill 5574)"
     ]
   }
 }

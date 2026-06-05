@@ -141,10 +141,10 @@ function pillLabel(e: Entry): string {
 
 // ── Course autocomplete ────────────────────────────────────────────────────────
 
-let _cachedCourses: { code: string; title: string }[] | null = null
+let _cachedCourses: { code: string; title: string; units?: number | null }[] | null = null
 
 function useCourses() {
-  const [courses, setCourses] = useState<{ code: string; title: string }[]>(_cachedCourses ?? [])
+  const [courses, setCourses] = useState<{ code: string; title: string; units?: number | null }[]>(_cachedCourses ?? [])
   useEffect(() => {
     if (_cachedCourses !== null) { setCourses(_cachedCourses); return }
     fetch("/courses.json")
@@ -156,7 +156,7 @@ function useCourses() {
 }
 
 // GE-tagged courses, keyed by category letter. Loaded once and cached.
-type GeCourseMap = Record<string, { code: string; title: string }[]>
+type GeCourseMap = Record<string, { code: string; title: string; units?: number | null }[]>
 let _cachedGeCourses: GeCourseMap | null = null
 
 function useGeCourses() {
@@ -482,7 +482,7 @@ function DeptCourseSearchInput({
     overflowY: "auto",
   }
 
-  const courseRow = (c: { code: string; title: string }, i: number) => (
+  const courseRow = (c: { code: string; title: string; units?: number | null }, i: number) => (
     <button
       key={c.code}
       type="button"
@@ -490,21 +490,28 @@ function DeptCourseSearchInput({
       onClick={() => commitCourse(c.code)}
       onMouseEnter={() => setHiIdx(i)}
       style={{
-        display: "block",
+        display: "flex",
+        alignItems: "baseline",
         width: "100%",
         textAlign: "left",
         padding: "6px 10px",
         background: i === hiIdx ? "rgba(153,0,0,0.07)" : "transparent",
         border: "none",
         cursor: "pointer",
+        gap: 6,
       }}
     >
-      <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", fontFamily: "monospace", letterSpacing: "0.03em" }}>
+      <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", fontFamily: "monospace", letterSpacing: "0.03em", flexShrink: 0 }}>
         {c.code.replace(" ", "-")}
       </span>
       {c.title && (
-        <span style={{ fontSize: 11, color: "var(--text-tertiary)", marginLeft: 6 }}>
+        <span style={{ fontSize: 11, color: "var(--text-tertiary)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {c.title}
+        </span>
+      )}
+      {c.units != null && (
+        <span style={{ fontSize: 11, color: "var(--text-tertiary)", flexShrink: 0, marginLeft: "auto" }}>
+          {c.units} {c.units === 1 ? "unit" : "units"}
         </span>
       )}
     </button>
@@ -2078,9 +2085,16 @@ function GeCourseDropdown({
                       e.currentTarget.style.background = isSelected ? "rgba(153,0,0,0.06)" : "transparent"
                     }}
                   >
-                    <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12, color: "var(--text-primary)" }}>
-                      {c.code}
-                    </span>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                      <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12, color: "var(--text-primary)", flexShrink: 0 }}>
+                        {c.code}
+                      </span>
+                      {c.units != null && (
+                        <span style={{ fontSize: 12, color: "var(--text-secondary)", marginLeft: "auto", flexShrink: 0 }}>
+                          {c.units} {c.units === 1 ? "unit" : "units"}
+                        </span>
+                      )}
+                    </div>
                     <span style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.3 }}>
                       {c.title}
                     </span>

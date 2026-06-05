@@ -62,7 +62,9 @@ async def fetch_category(
             continue
         seen.add(code)
         title = (c.get("name") or c.get("description") or "").strip()
-        out.append({"code": code, "title": title})
+        units_raw = c.get("courseUnits") or []
+        units = units_raw[0] if units_raw else None
+        out.append({"code": code, "title": title, "units": units})
     out.sort(key=lambda x: x["code"])
     return out
 

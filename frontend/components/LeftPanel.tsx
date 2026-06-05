@@ -40,12 +40,14 @@ export default function LeftPanel({ currentStep, onStartOver }: Props) {
           USC · Fall 2026
         </p>
         <h1
+          onClick={onStartOver}
           style={{
             fontFamily: "'DM Serif Display', serif",
             color: "#fff",
             fontSize: 30,
             lineHeight: 1.1,
             marginBottom: 12,
+            cursor: onStartOver ? "pointer" : "default",
           }}
         >
           Trojan<br />Scheduler

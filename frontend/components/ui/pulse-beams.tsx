@@ -121,7 +121,7 @@ const SVGs = ({ beams, width, height, baseColor, accentColor, gradientColors }: 
 
       <defs>
         {beams.map((beam, index) => (
-          // @ts-expect-error – framer-motion supports linearGradient but typedefs may omit it
+          // @ts-ignore – framer-motion supports linearGradient but typedefs may omit it
           <motion.linearGradient
             key={index}
             id={`grad${index}`}
@@ -131,7 +131,7 @@ const SVGs = ({ beams, width, height, baseColor, accentColor, gradientColors }: 
             transition={beam.gradientConfig.transition}
           >
             <GradientColors colors={gradientColors} />
-          {/* @ts-expect-error */}
+          {/* @ts-ignore */}
           </motion.linearGradient>
         ))}
       </defs>

@@ -287,9 +287,9 @@ class Star {
                 screenY = controller.lerp(baseY, targetY, finalProgress)
             }
 
-            // @ts-expect-error – accessing private fields for projection
+            // @ts-ignore – accessing private fields for projection
             const vx = (this.z - controller['cameraZ']) * screenX / controller['viewZoom']
-            // @ts-expect-error
+            // @ts-ignore
             const vy = (this.z - controller['cameraZ']) * screenY / controller['viewZoom']
 
             const position = new Vector3D(vx, vy, this.z)

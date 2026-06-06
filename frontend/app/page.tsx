@@ -171,7 +171,7 @@ export default function Home() {
 
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
-      <LeftPanel currentStep={currentStep} onStartOver={stage === "results" ? handleStartOver : undefined} />
+      <LeftPanel currentStep={currentStep} onStartOver={stage === "results" || stage === "detail" ? handleStartOver : undefined} />
       <div
         style={{
           marginLeft: "22.222%",

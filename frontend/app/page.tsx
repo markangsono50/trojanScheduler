@@ -33,11 +33,8 @@ export default function Home() {
     setError(null)
     setStage("loading")
     try {
-      const res = await fetch(
-        process.env.NEXT_PUBLIC_BACKEND_URL
-          ? `${process.env.NEXT_PUBLIC_BACKEND_URL}/generate`
-          : "/api/generate",
-        {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000"
+      const res = await fetch(`${backendUrl}/generate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),

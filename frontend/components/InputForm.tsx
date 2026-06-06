@@ -183,7 +183,7 @@ function useCourseOptions(code: string) {
     if (!key) { setOptions(null); return }
     if (_optionsCache[key]) { setOptions(_optionsCache[key]); return }
     setLoading(true)
-    const base = process.env.NEXT_PUBLIC_BACKEND_URL ?? ""
+    const base = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000"
     fetch(`${base}/course-options?code=${encodeURIComponent(key)}`)
       .then((r) => r.json())
       .then((data: CourseOptions) => { _optionsCache[key] = data; setOptions(data) })

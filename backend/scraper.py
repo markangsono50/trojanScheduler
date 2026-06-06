@@ -1,6 +1,7 @@
+import os
 import httpx
 
-TERM_CODE = "20263"  # Fall 2026 — update each semester
+TERM_CODE = os.getenv("TERM_CODE", "20263")  # Fall 2026 — set TERM_CODE env var to change semester
 BASE_URL = "https://classes.usc.edu/api"
 
 HTTP_HEADERS = {

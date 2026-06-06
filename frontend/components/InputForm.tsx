@@ -201,6 +201,123 @@ function formatSectionLabel(s: SectionOption): string {
   return `${days} ${time}  ·  ${seats} open`
 }
 
+function ProfessorDropdown({
+  professors,
+  value,
+  onChange,
+  announced,
+}: {
+  professors: string[]
+  value: string
+  onChange: (prof: string) => void
+  announced: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [])
+
+  const label = value || "Any professor"
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: "100%",
+          textAlign: "left",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 4,
+          padding: "6px 10px",
+          fontSize: 13,
+          border: "1px solid var(--border-default)",
+          borderRadius: 8,
+          background: "white",
+          cursor: "pointer",
+          color: value ? "var(--text-primary)" : "var(--text-tertiary)",
+          outline: "none",
+        }}
+      >
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {label}
+        </span>
+        <span style={{ flexShrink: 0, color: "var(--text-tertiary)", fontSize: 11 }}>▾</span>
+      </button>
+
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 4px)",
+            left: 0,
+            right: 0,
+            zIndex: 9999,
+            background: "white",
+            border: "1px solid var(--border-default)",
+            borderRadius: 8,
+            boxShadow: "0 4px 16px rgba(0,0,0,0.14)",
+            maxHeight: 220,
+            overflowY: "auto",
+          }}
+        >
+          <div
+            onClick={() => { onChange(""); setOpen(false) }}
+            style={{
+              padding: "8px 10px",
+              fontSize: 13,
+              cursor: "pointer",
+              color: value === "" ? "var(--text-primary)" : "var(--text-secondary)",
+              fontWeight: value === "" ? 600 : 400,
+              borderBottom: "1px solid var(--border-default)",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-subtle, #f9f9f9)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+          >
+            Any professor
+          </div>
+          {!announced ? (
+            <div style={{ padding: "10px 10px", fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>
+              Professors will be announced later
+            </div>
+          ) : (
+            professors.map((p) => (
+              <div
+                key={p}
+                onClick={() => { onChange(p); setOpen(false) }}
+                style={{
+                  padding: "8px 10px",
+                  fontSize: 13,
+                  cursor: "pointer",
+                  color: "var(--text-primary)",
+                  fontWeight: p === value ? 600 : 400,
+                  background: p === value ? "rgba(153,0,0,0.06)" : "transparent",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = p === value ? "rgba(153,0,0,0.10)" : "var(--bg-subtle, #f9f9f9)"
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = p === value ? "rgba(153,0,0,0.06)" : "transparent"
+                }}
+              >
+                {p}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function SectionDropdown({
   sections,
   value,
@@ -242,6 +359,7 @@ function SectionDropdown({
           background: "white",
           cursor: "pointer",
           color: selected ? "var(--text-primary)" : "var(--text-tertiary)",
+          outline: "none",
         }}
       >
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -1652,7 +1770,7 @@ function CourseEntryBlock({
               <button
                 type="button"
                 className="bg-transparent border-none cursor-pointer uppercase tracking-wide"
-                style={{ color: "inherit", fontFamily: "inherit", fontSize: "inherit", fontWeight: "inherit" }}
+                style={{ color: "inherit", fontFamily: "inherit", fontSize: "inherit", fontWeight: "inherit", outline: "none" }}
                 onClick={() => setEditingId(editingId === e.id ? null : e.id)}
               >
                 {pillLabel(e)}
@@ -1661,6 +1779,7 @@ function CourseEntryBlock({
                 type="button"
                 className="form-pill-remove"
                 aria-label={`Remove ${pillLabel(e)}`}
+                style={{ outline: "none" }}
                 onClick={() => removeEntry(entries, setEntries, e.id)}
               >
                 ×
@@ -1680,7 +1799,7 @@ function CourseEntryBlock({
       )}
 
       {((editingId !== null && entries.some((x) => x.id === editingId)) || incomplete.length > 0) && (
-        <div className="rounded-lg p-2.5 border space-y-2" style={{ borderColor: "var(--border-default)", background: "var(--bg-subtle)" }}>
+        <div className="rounded-lg p-2.5 space-y-2">
           {editingId !== null && entries.find((x) => x.id === editingId) && (
             <EntryEditor
               entry={entries.find((x) => x.id === editingId)!}
@@ -1744,48 +1863,11 @@ function CourseDetailsSelectors({
   const safeProf = professor ?? ""
   const safeSid = sectionId ?? ""
 
-  if (!code.trim()) {
-    return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <input
-          value={safeProf}
-          onChange={(e) => onProfessorChange(e.target.value)}
-          placeholder="Professor (optional)"
-        />
-        <input
-          value={safeSid}
-          onChange={(e) => onSectionChange(e.target.value, "")}
-          placeholder="Section ID (optional)"
-        />
-      </div>
-    )
-  }
+  if (!code.trim()) return null
 
-  if (loading) {
-    return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <input disabled value="" placeholder="Loading…" style={{ opacity: 0.5 }} />
-        <input disabled value="" placeholder="Loading…" style={{ opacity: 0.5 }} />
-      </div>
-    )
-  }
+  if (loading) return null
 
-  if (!options || options.sections.length === 0) {
-    return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <input
-          value={safeProf}
-          onChange={(e) => onProfessorChange(e.target.value)}
-          placeholder="Professor (optional)"
-        />
-        <input
-          value={safeSid}
-          onChange={(e) => onSectionChange(e.target.value, "")}
-          placeholder="Section ID (optional)"
-        />
-      </div>
-    )
-  }
+  if (!options || options.sections.length === 0) return null
 
   const visibleSections = safeProf
     ? options.sections.filter((s) => s.professor === safeProf)
@@ -1793,21 +1875,12 @@ function CourseDetailsSelectors({
 
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-      <select
+      <ProfessorDropdown
+        professors={options.professors}
         value={safeProf}
-        onChange={(e) => onProfessorChange(e.target.value)}
-      >
-        <option value="">Any professor</option>
-        {options.professors.length === 0 ? (
-          <option disabled style={{ fontStyle: "italic", color: "#999" }}>
-            Professors will be announced later
-          </option>
-        ) : (
-          options.professors.map((p) => (
-            <option key={p} value={p}>{p}</option>
-          ))
-        )}
-      </select>
+        onChange={onProfessorChange}
+        announced={options.professors.length > 0}
+      />
 
       <SectionDropdown
         sections={visibleSections}
@@ -1840,7 +1913,7 @@ function EntryEditor({
         <button
           type="button"
           className="text-[11px] font-medium"
-          style={{ color: "var(--cardinal)" }}
+          style={{ color: "var(--cardinal)", outline: "none", border: "none", background: "none" }}
           onClick={() => removeEntry(list, setList, entry.id)}
         >
           Remove
@@ -1984,6 +2057,7 @@ function GeCourseDropdown({
           background: "white",
           cursor: "pointer",
           color: selected ? "var(--text-primary)" : "var(--text-tertiary)",
+          outline: "none",
         }}
       >
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

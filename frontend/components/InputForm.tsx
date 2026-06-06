@@ -1506,7 +1506,7 @@ export default function InputForm({
 
         </div>
 
-        <div style={{ position: "fixed", bottom: 0, left: "22.222%", right: 0, zIndex: 50, background: "var(--bg-page)", borderTop: "1px solid var(--border-subtle)", padding: "14px 56px" }}>
+        <div className="app-submit-footer" style={{ position: "fixed", bottom: 0, left: "var(--content-offset)", right: 0, zIndex: 50, background: "var(--bg-page)", borderTop: "1px solid var(--border-subtle)", padding: "14px 56px" }}>
           <div style={{ maxWidth: 860, margin: "0 auto" }}>
             <button type="button" onClick={handleSubmit} className="btn-primary w-full py-3 text-sm gap-2 rounded-xl">
               <SparkleIcon />

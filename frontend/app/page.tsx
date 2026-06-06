@@ -148,7 +148,7 @@ export default function Home() {
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
 
-  const currentStep: 1 | 2 | 3 = stage === "detail" ? 3 : stage === "form" ? 1 : 2
+  const currentStep: 1 | 2 | 3 = stage === "loading" ? 2 : stage === "form" ? 1 : 3
 
   // The form stage uses InputForm's own shell (LeftPanel + content area).
   // For loading/results/detail we reproduce the same shell here so the layout

@@ -638,14 +638,28 @@ input[type="range"].form-constraint-range::-moz-range-progress {
   .app-sidebar-mobile  { display: flex !important; }
 
   .app-form-inner {
-    padding: 20px 20px 80px !important;
+    padding: calc(var(--topbar-height) + 20px) 20px 80px !important;
   }
 
   .app-results-inner {
-    padding: 24px 20px 48px !important;
+    padding: calc(var(--topbar-height) + 24px) 20px 48px !important;
   }
 
   .app-discussion-inner {
-    padding: 24px 20px !important;
+    padding-top: calc(var(--topbar-height) + 24px) !important;
+  }
+
+  /* Submit footer full-width with tighter padding */
+  .app-submit-footer {
+    padding: 14px 20px !important;
+  }
+
+  /* Prevent iOS auto-zoom on input focus */
+  input[type="text"],
+  input[type="time"],
+  select,
+  textarea,
+  .form-add-row input.form-add-input {
+    font-size: 16px !important;
   }
 }

@@ -12,7 +12,58 @@ export default function LeftPanel({ currentStep, onStartOver }: Props) {
     { num: 3, label: "Review & export" },
   ]
   return (
+    <>
+    {/* Mobile top bar */}
     <div
+      className="app-sidebar-mobile"
+      style={{
+        position: "fixed",
+        left: 0,
+        top: 0,
+        width: "100%",
+        height: 56,
+        background: "linear-gradient(to right, #3d0000, #6B0000)",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "0 20px",
+        zIndex: 20,
+      }}
+    >
+      <h1
+        onClick={onStartOver}
+        style={{
+          fontFamily: "'DM Serif Display', serif",
+          color: "#fff",
+          fontSize: 20,
+          margin: 0,
+          cursor: onStartOver ? "pointer" : "default",
+        }}
+      >
+        Trojan Scheduler
+      </h1>
+      {onStartOver && (
+        <button
+          onClick={onStartOver}
+          style={{
+            background: "transparent",
+            border: "1px solid rgba(255,255,255,0.35)",
+            borderRadius: 8,
+            padding: "5px 12px",
+            fontSize: 12,
+            fontWeight: 600,
+            color: "rgba(255,255,255,0.85)",
+            cursor: "pointer",
+            letterSpacing: "0.04em",
+          }}
+        >
+          Start over
+        </button>
+      )}
+    </div>
+
+    {/* Desktop sidebar */}
+    <div
+      className="app-sidebar-desktop"
       style={{
         position: "fixed",
         left: 0,
@@ -20,7 +71,6 @@ export default function LeftPanel({ currentStep, onStartOver }: Props) {
         bottom: 0,
         width: "22.222%",
         background: "linear-gradient(170deg, #3d0000 0%, #6B0000 45%, #990000 100%)",
-        display: "flex",
         flexDirection: "column",
         padding: "40px 28px",
         zIndex: 10,
@@ -150,5 +200,6 @@ export default function LeftPanel({ currentStep, onStartOver }: Props) {
         )}
       </div>
     </div>
+    </>
   )
 }

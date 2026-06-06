@@ -55,7 +55,7 @@ export default function LoadingScreen() {
   return (
     <div
       className="flex flex-col items-center justify-center px-6"
-      style={{ minHeight: "100vh" }}
+      style={{ minHeight: "100vh", paddingTop: "var(--topbar-height)" }}
     >
       <p
         className="text-2xl md:text-3xl text-center mb-10"

@@ -1045,7 +1045,7 @@ export default function InputForm({
     return (
       <div style={{ display: "flex", minHeight: "100vh" }}>
         <LeftPanel currentStep={1} />
-        <div style={{ marginLeft: "22.222%", width: "77.778%", minHeight: "100vh", backgroundColor: "var(--bg-page)", display: "flex", alignItems: "center", justifyContent: "center", padding: "48px" }}>
+        <div style={{ marginLeft: "var(--content-offset)", width: "var(--content-width)", minHeight: "100vh", backgroundColor: "var(--bg-page)", display: "flex", alignItems: "center", justifyContent: "center", paddingTop: "calc(var(--topbar-height) + 48px)", paddingBottom: 48 }} className="app-discussion-inner">
           <div style={{ maxWidth: 520, width: "100%" }}>
             {/* Header — surfaces the system-selected lecturer so the link
                 between "options shown" and "lecturer chosen" is explicit.
@@ -1229,8 +1229,8 @@ export default function InputForm({
 
       <LeftPanel currentStep={1} />
 
-      <div style={{ marginLeft: "22.222%", width: "77.778%", minHeight: "100vh", backgroundColor: "var(--bg-page)" }}>
-        <div style={{ maxWidth: 860, margin: "0 auto", padding: "32px 56px 80px" }}>
+      <div style={{ marginLeft: "var(--content-offset)", width: "var(--content-width)", minHeight: "100vh", backgroundColor: "var(--bg-page)" }}>
+        <div className="app-form-inner" style={{ maxWidth: 860, margin: "0 auto", paddingTop: "calc(var(--topbar-height) + 32px)", paddingRight: 56, paddingBottom: 80, paddingLeft: 56 }}>
 
           {/* Planning Mode — global mode switch, top right */}
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginBottom: 20 }}>

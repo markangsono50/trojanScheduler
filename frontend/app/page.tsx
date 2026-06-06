@@ -171,8 +171,8 @@ export default function Home() {
       <LeftPanel currentStep={currentStep} onStartOver={stage === "results" || stage === "detail" ? handleStartOver : undefined} />
       <div
         style={{
-          marginLeft: "22.222%",
-          width: "77.778%",
+          marginLeft: "var(--content-offset)",
+          width: "var(--content-width)",
           minHeight: "100vh",
           backgroundColor: "var(--bg-page)",
         }}
@@ -180,7 +180,7 @@ export default function Home() {
         {stage === "loading" && <LoadingScreen />}
 
         {(stage === "results" || stage === "detail") && response && (
-          <div style={{ maxWidth: 1280, margin: "0 auto", padding: "56px 64px 96px" }}>
+          <div className="app-results-inner" style={{ maxWidth: 1280, margin: "0 auto", paddingTop: "calc(var(--topbar-height) + 56px)", paddingRight: 64, paddingBottom: 96, paddingLeft: 64 }}>
 
             {/* Page title */}
             <div style={{ marginBottom: 48 }}>

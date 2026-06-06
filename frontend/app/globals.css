@@ -616,3 +616,36 @@ input[type="range"].form-constraint-range::-moz-range-progress {
   background: rgba(255, 204, 0, 0.25);
   border-color: var(--gold-dark);
 }
+
+/* ── Responsive layout ─────────────────────────────────────────────────── */
+:root {
+  --content-offset: 22.222%;
+  --content-width: 77.778%;
+  --topbar-height: 0px;
+}
+
+.app-sidebar-desktop { display: flex; }
+.app-sidebar-mobile  { display: none; }
+
+@media (max-width: 768px) {
+  :root {
+    --content-offset: 0px;
+    --content-width: 100%;
+    --topbar-height: 56px;
+  }
+
+  .app-sidebar-desktop { display: none !important; }
+  .app-sidebar-mobile  { display: flex !important; }
+
+  .app-form-inner {
+    padding: 20px 20px 80px !important;
+  }
+
+  .app-results-inner {
+    padding: 24px 20px 48px !important;
+  }
+
+  .app-discussion-inner {
+    padding: 24px 20px !important;
+  }
+}

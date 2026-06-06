@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { motion } from "framer-motion";
+import { motion, type RepeatType } from "framer-motion";
 import { cn } from "@/lib/utils";
 
 interface BeamPath {
@@ -17,7 +17,7 @@ interface BeamPath {
     transition?: {
       duration?: number;
       repeat?: number;
-      repeatType?: string;
+      repeatType?: RepeatType;
       ease?: string;
       repeatDelay?: number;
       delay?: number;

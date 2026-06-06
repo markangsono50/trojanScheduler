@@ -345,9 +345,12 @@ async def generate(req: GenerateRequest):
     # 7. Render schedule images
     schedules = result.get("schedules", [])
     if schedules:
-        from image_gen import generate_schedule_images
-        images = await generate_schedule_images(schedules)
-        for schedule, img in zip(schedules, images):
-            schedule["image_base64"] = img
+        try:
+            from image_gen import generate_schedule_images
+            images = await generate_schedule_images(schedules)
+            for schedule, img in zip(schedules, images):
+                schedule["image_base64"] = img
+        except Exception as e:
+            print(f"[image_gen] failed: {e}")
 
     return result

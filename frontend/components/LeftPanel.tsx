@@ -21,44 +21,69 @@ export default function LeftPanel({ currentStep, onStartOver }: Props) {
         left: 0,
         top: 0,
         width: "100%",
-        height: 56,
-        background: "linear-gradient(to right, #3d0000, #6B0000)",
+        height: 64,
+        background: "linear-gradient(170deg, #3d0000 0%, #6B0000 45%, #990000 100%)",
         alignItems: "center",
         justifyContent: "space-between",
         padding: "0 20px",
         zIndex: 20,
       }}
     >
-      <h1
-        onClick={onStartOver}
-        style={{
-          fontFamily: "'DM Serif Display', serif",
-          color: "#fff",
-          fontSize: 20,
-          margin: 0,
-          cursor: onStartOver ? "pointer" : "default",
-        }}
-      >
-        Trojan Scheduler
-      </h1>
-      {onStartOver && (
-        <button
-          onClick={onStartOver}
-          style={{
-            background: "transparent",
-            border: "1px solid rgba(255,255,255,0.35)",
-            borderRadius: 8,
-            padding: "5px 12px",
-            fontSize: 12,
-            fontWeight: 600,
-            color: "rgba(255,255,255,0.85)",
-            cursor: "pointer",
-            letterSpacing: "0.04em",
-          }}
-        >
-          Start over
-        </button>
-      )}
+      {/* Brand */}
+      <div onClick={onStartOver} style={{ cursor: onStartOver ? "pointer" : "default" }}>
+        <p style={{ fontSize: 9, fontWeight: 600, letterSpacing: "0.12em", color: "rgba(255,204,0,0.75)", textTransform: "uppercase", marginBottom: 2 }}>
+          USC · Fall 2026
+        </p>
+        <h1 style={{ fontFamily: "'DM Serif Display', serif", color: "#fff", fontSize: 18, lineHeight: 1, margin: 0 }}>
+          Trojan Scheduler
+        </h1>
+      </div>
+
+      {/* Right side: step indicators + start over */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {steps.map(({ num }) => {
+            const active = num === currentStep
+            return (
+              <div
+                key={num}
+                style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: "50%",
+                  border: active ? "2px solid rgba(255,204,0,0.75)" : "2px solid rgba(255,255,255,0.2)",
+                  background: active ? "rgba(255,204,0,0.1)" : "transparent",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <span style={{ fontSize: 9, fontWeight: 700, color: active ? "rgba(255,204,0,0.9)" : "rgba(255,255,255,0.3)" }}>
+                  {num}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+        {onStartOver && (
+          <button
+            onClick={onStartOver}
+            style={{
+              background: "transparent",
+              border: "none",
+              padding: 0,
+              fontSize: 10,
+              fontWeight: 600,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: "rgba(255,255,255,0.45)",
+              cursor: "pointer",
+            }}
+          >
+            Start Over
+          </button>
+        )}
+      </div>
     </div>
 
     {/* Desktop sidebar */}

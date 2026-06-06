@@ -631,7 +631,7 @@ input[type="range"].form-constraint-range::-moz-range-progress {
   :root {
     --content-offset: 0px;
     --content-width: 100%;
-    --topbar-height: 56px;
+    --topbar-height: 64px;
   }
 
   .app-sidebar-desktop { display: none !important; }

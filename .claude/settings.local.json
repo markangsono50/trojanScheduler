@@ -32,7 +32,8 @@
       "Read(//opt/homebrew/bin/**)",
       "Bash(python3.11 *)",
       "Bash(xargs kill -9)",
-      "Bash(kill 5574)"
+      "Bash(kill 5574)",
+      "Bash(npm i *)"
     ]
   }
 }

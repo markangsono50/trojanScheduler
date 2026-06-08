@@ -935,6 +935,7 @@ export default function InputForm({
   const [showDaysOff, setShowDaysOff] = useState(false)
   const [rankingsOpen, setRankingsOpen] = useState(false)
   const [planningMode, setPlanningMode] = useState(true)
+  const [autoPickMode, setAutoPickMode] = useState(false)
 
   const updateEntry = (
     list: Entry[],
@@ -981,6 +982,7 @@ export default function InputForm({
       prof_slider: profSlider,
       convenience_slider: convSlider,
       planning_mode: planningMode,
+      auto_pick_mode: autoPickMode,
     })
   }
 
@@ -1232,8 +1234,41 @@ export default function InputForm({
       <div style={{ marginLeft: "var(--content-offset)", width: "var(--content-width)", minHeight: "100vh", backgroundColor: "var(--bg-page)" }}>
         <div className="app-form-inner" style={{ maxWidth: 860, margin: "0 auto", paddingTop: "calc(var(--topbar-height) + 32px)", paddingRight: 56, paddingBottom: 80, paddingLeft: 56 }}>
 
-          {/* Planning Mode — global mode switch, top right */}
-          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", marginBottom: 20 }}>
+          {/* Mode toggles — top right */}
+          <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 16, marginBottom: 20 }}>
+            {/* Auto Pick toggle */}
+            <div className="flex items-center gap-2">
+              <span style={{ fontSize: 12, fontWeight: 600, color: autoPickMode ? "var(--cardinal)" : "var(--text-tertiary)", transition: "color 0.2s", userSelect: "none" as const }}>
+                Auto Pick
+              </span>
+              <button
+                type="button"
+                onClick={() => setAutoPickMode((v) => !v)}
+                style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
+                aria-label="Toggle Auto Pick Mode"
+              >
+                <div className="toggle shrink-0 pointer-events-none" style={{ backgroundColor: autoPickMode ? "var(--cardinal)" : "var(--border-default)", transform: "scale(0.85)", transformOrigin: "center" }}>
+                  <div className="toggle-thumb" style={{ transform: autoPickMode ? "translateX(18px)" : "translateX(0)" }} />
+                </div>
+              </button>
+              <div className="relative group" style={{ display: "flex", alignItems: "center" }}>
+                <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ color: "var(--text-tertiary)", flexShrink: 0, cursor: "help" }}>
+                  <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
+                  <path d="M8 7v5M8 5.5v.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+                <div
+                  className="absolute opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150"
+                  style={{ top: "calc(100% + 8px)", right: 0, width: 240, background: "#FFFFFF", border: "1px solid var(--border-default)", borderRadius: 10, padding: "14px 16px", boxShadow: "0 4px 16px rgba(0,0,0,0.08)", zIndex: 50, textAlign: "left" as const }}
+                >
+                  <div style={{ position: "absolute", top: -5, right: 4, width: 10, height: 10, background: "#FFFFFF", borderTop: "1px solid var(--border-default)", borderLeft: "1px solid var(--border-default)", transform: "rotate(45deg)" }} />
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>Auto Pick</div>
+                  <p style={{ margin: 0, fontSize: 12, lineHeight: 1.5, color: "var(--text-secondary)" }}>
+                    Automatically lets the program choose labs, discussions, and quizzes — skips the picker entirely.
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <div className="flex items-center gap-2">
               <span style={{ fontSize: 12, fontWeight: 600, color: planningMode ? "var(--cardinal)" : "var(--text-tertiary)", transition: "color 0.2s", userSelect: "none" as const }}>
                 Planning Mode

@@ -28,6 +28,7 @@ export default function Home() {
   const [promptType, setPromptType] = useState<"discussion" | "lab" | "quiz">("discussion")
   const [pendingPayload, setPendingPayload] = useState<GenerateRequest | null>(null)
   const [planningMode, setPlanningMode] = useState(true)
+  const [autoPickMode, setAutoPickMode] = useState(false)
 
   const callGenerate = async (payload: GenerateRequest) => {
     setError(null)
@@ -44,6 +45,17 @@ export default function Home() {
 
       if (data.needs_linked_section_prompt) {
         const course = data.needs_linked_section_prompt
+
+        // Auto pick: skip the picker and resubmit with no preference
+        if (autoPickMode) {
+          const existing = payload.linked_section_preferences ?? {}
+          callGenerate({
+            ...payload,
+            linked_section_preferences: { ...existing, [course]: {} },
+          })
+          return
+        }
+
         const bundles = data.linked_section_options?.[course] ?? []
         // The backend tells us which linked type to surface (discussion / lab /
         // quiz). A type with only one option never gets prompted — the backend
@@ -92,6 +104,7 @@ export default function Home() {
 
   const handleSubmit = (payload: GenerateRequest) => {
     setPlanningMode(payload.planning_mode ?? true)
+    setAutoPickMode(payload.auto_pick_mode ?? false)
     setPendingPayload(payload)
     callGenerate(payload)
   }

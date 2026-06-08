@@ -80,6 +80,7 @@ export interface GenerateRequest {
   prof_slider: number             // 0–1
   convenience_slider: number      // 0–1
   planning_mode?: boolean
+  auto_pick_mode?: boolean
   // Sent on second attempt if needs_linked_section_prompt was returned.
   // Shape: { course_code: { lecture_section_id, discussion, lab?, quiz? } }
   linked_section_preferences?: Record<string, Record<string, string>>

@@ -323,6 +323,33 @@ async def generate(req: GenerateRequest):
                 if c not in all_sections:
                     all_sections[c] = _to_sections(c, raw)
 
+    # 4c. Pre-filter the GE candidate pool by the lecture-level hard constraints
+    # *before* RMP enrichment. GE pools span hundreds of professors, most of
+    # whose sections the solver later drops on seats/modality/time/days. Pruning
+    # them here shrinks the unique-professor set we hit RMP for. This is
+    # output-preserving: the solver re-applies these exact lecture-level filters
+    # in filter_and_pin_sections, so we only remove sections it would also drop.
+    # Skipped in planning_mode, where the solver bypasses these filters entirely.
+    if not req.planning_mode:
+        from solver import (
+            _section_in_time_window,
+            _modality_ok,
+            _no_day_off_conflict,
+        )
+
+        def _passes_hard_filters(s: Section) -> bool:
+            return (
+                s.seats_available > 0
+                and _modality_ok(s, solver_constraints)
+                and _section_in_time_window(s, solver_constraints)
+                and _no_day_off_conflict(s.days, solver_constraints)
+            )
+
+        ge_candidates = {
+            slot: [s for s in secs if _passes_hard_filters(s)]
+            for slot, secs in ge_candidates.items()
+        }
+
     # 5. Enrich all sections with RMP data
     from rmp import enrich_with_rmp
     combined = dict(all_sections)
@@ -341,16 +368,5 @@ async def generate(req: GenerateRequest):
         convenience_slider=req.convenience_slider,
         planning_mode=req.planning_mode,
     )
-
-    # 7. Render schedule images
-    schedules = result.get("schedules", [])
-    if schedules:
-        try:
-            from image_gen import generate_schedule_images
-            images = await generate_schedule_images(schedules)
-            for schedule, img in zip(schedules, images):
-                schedule["image_base64"] = img
-        except Exception as e:
-            print(f"[image_gen] failed: {e}")
 
     return result

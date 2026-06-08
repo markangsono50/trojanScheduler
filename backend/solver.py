@@ -103,6 +103,28 @@ class SectionPair:
     lecture: Section
     linked_sections: list[LinkedSection] = field(default_factory=list)
 
+    # Lazily-computed conflict blocks: (frozenset(days), start_min, end_min,
+    # is_online). Precomputed once so pair_conflicts_with_pair compares integers
+    # instead of re-parsing "HH:MM" strings on every call (hot path in the
+    # backtracking search). Untimed blocks are dropped — they never conflict.
+    _blocks_cache: Optional[list] = field(default=None, init=False, repr=False, compare=False)
+
+    @property
+    def blocks(self) -> list[tuple[frozenset, int, int, bool]]:
+        if self._blocks_cache is None:
+            blks: list[tuple[frozenset, int, int, bool]] = []
+            lec = self.lecture
+            lec_online = lec.modality == "online"
+            s, e = _to_minutes(lec.start_time), _to_minutes(lec.end_time)
+            if s >= 0 and e >= 0:
+                blks.append((frozenset(lec.days), s, e, lec_online))
+            for ls in self.linked_sections:
+                ls_s, ls_e = _to_minutes(ls.start_time), _to_minutes(ls.end_time)
+                if ls_s >= 0 and ls_e >= 0:
+                    blks.append((frozenset(ls.days), ls_s, ls_e, False))
+            self._blocks_cache = blks
+        return self._blocks_cache
+
     @property
     def course(self) -> str:
         return self.lecture.course
@@ -570,22 +592,15 @@ def pair_conflicts_with_pair(
     Full conflict check between two SectionPairs.
     Checks every block in a against every block in b (lecture + all linked sections).
     Online lectures never conflict on time with anything.
+
+    Uses each pair's precomputed `blocks` (integer minutes, untimed blocks
+    already dropped) so this hot-path comparison avoids re-parsing time strings.
     """
-    a_online = a.lecture.modality == "online"
-    b_online = b.lecture.modality == "online"
-
-    # (days, start, end, is_online)
-    a_blocks = [(a.lecture.days, a.lecture.start_time, a.lecture.end_time, a_online)]
-    a_blocks += [(ls.days, ls.start_time, ls.end_time, False) for ls in a.linked_sections]
-
-    b_blocks = [(b.lecture.days, b.lecture.start_time, b.lecture.end_time, b_online)]
-    b_blocks += [(ls.days, ls.start_time, ls.end_time, False) for ls in b.linked_sections]
-
-    for days_a, start_a, end_a, online_a in a_blocks:
-        for days_b, start_b, end_b, online_b in b_blocks:
+    for days_a, s_a, e_a, online_a in a.blocks:
+        for days_b, s_b, e_b, online_b in b.blocks:
             if online_a and online_b:
                 continue
-            if _blocks_conflict(days_a, start_a, end_a, days_b, start_b, end_b, buffer_mins):
+            if days_a & days_b and s_a < e_b + buffer_mins and s_b < e_a + buffer_mins:
                 return True
 
     return False
@@ -875,9 +890,8 @@ def resolve_must_haves(
 # 5. GE AUTO-SELECTION (post must-have backtracking)
 # ---------------------------------------------------------------------------
 
-def rank_ge_candidates(
+def prepare_ge_pairs(
     candidates: list[Section],
-    placed: list[SectionPair],
     constraints: Constraints,
     ge_slot: str,
     ge_input: "CourseInput",
@@ -885,17 +899,15 @@ def rank_ge_candidates(
     planning_mode: bool = False,
 ) -> tuple[list[SectionPair], Optional[str]]:
     """
-    Return every GE pair that fits the placed schedule, ranked by RMP score
-    descending and deduplicated on section_id. Empty list + error string if
-    nothing qualifies.
+    Placed-INDEPENDENT half of GE ranking: ge_code filter → filter/pin →
+    expand to pairs → dedupe by section_id → sort by RMP descending.
 
-    ge_input carries optional narrowing fields:
-      ge_code    → restrict to a specific course within the category
-      professor  → pin to a specific professor
-      section_id → pin to an exact section
+    This work is identical across every must-have combination, so callers that
+    rank GEs against many combinations should call this once per slot and apply
+    the cheap placed-conflict filter themselves (see build_schedules).
+
+    Returns (ranked_pairs, error). error is a string if nothing qualifies.
     """
-    buffer_mins = 0 if planning_mode else (10 if constraints.no_back_to_back else 0)
-
     if ge_input.ge_code:
         candidates = [s for s in candidates if s.course.upper() == ge_input.ge_code.upper()]
         if not candidates:
@@ -921,6 +933,37 @@ def rank_ge_candidates(
         if pair.lecture.section_id not in seen_ids:
             seen_ids.add(pair.lecture.section_id)
             ranked.append(pair)
+
+    return ranked, None
+
+
+def rank_ge_candidates(
+    candidates: list[Section],
+    placed: list[SectionPair],
+    constraints: Constraints,
+    ge_slot: str,
+    ge_input: "CourseInput",
+    rmp_cap: int = 10,
+    planning_mode: bool = False,
+) -> tuple[list[SectionPair], Optional[str]]:
+    """
+    Return every GE pair that fits the placed schedule, ranked by RMP score
+    descending and deduplicated on section_id. Empty list + error string if
+    nothing qualifies.
+
+    ge_input carries optional narrowing fields:
+      ge_code    → restrict to a specific course within the category
+      professor  → pin to a specific professor
+      section_id → pin to an exact section
+    """
+    buffer_mins = 0 if planning_mode else (10 if constraints.no_back_to_back else 0)
+
+    ranked, error = prepare_ge_pairs(
+        candidates, constraints, ge_slot, ge_input,
+        rmp_cap=rmp_cap, planning_mode=planning_mode,
+    )
+    if error:
+        return [], error
 
     placed_courses = {p.lecture.course for p in placed}
     valid = [
@@ -970,6 +1013,40 @@ def auto_select_ge(
 # 6. NICE-TO-HAVE INJECTION
 # ---------------------------------------------------------------------------
 
+def prepare_nice_to_have_pairs(
+    nice_to_have_inputs: list[CourseInput],
+    all_sections: dict[str, list[Section]],
+    constraints: Constraints,
+    rmp_cap: int = 10,
+    planning_mode: bool = False,
+) -> list[list[SectionPair]]:
+    """
+    Placed-INDEPENDENT prep for nice-to-have injection: for each input, the
+    filtered + expanded + RMP-sorted candidate pairs. This work is identical for
+    every schedule variant (only the per-schedule units + conflict checks in
+    inject_nice_to_haves vary), so compute it once and reuse it. Returns one
+    pair-list per input, aligned by index with nice_to_have_inputs.
+    """
+    prepared: list[list[SectionPair]] = []
+    for course_input in nice_to_have_inputs:
+        course_code = course_input.code or ""
+        raw_sections = all_sections.get(course_code, [])
+        if not raw_sections:
+            prepared.append([])
+            continue
+
+        filtered, _ = filter_and_pin_sections(raw_sections, course_input, constraints, rmp_cap, planning_mode=planning_mode)
+        if not filtered:
+            prepared.append([])
+            continue
+
+        pairs, _, _ = expand_to_pairs(filtered, constraints, course_input.preferred_linked_section_ids, planning_mode=planning_mode)
+        pairs.sort(key=lambda p: p.lecture.rmp_score, reverse=True)
+        prepared.append(pairs)
+
+    return prepared
+
+
 def inject_nice_to_haves(
     combination: list[SectionPair],
     nice_to_have_inputs: list[CourseInput],
@@ -978,33 +1055,32 @@ def inject_nice_to_haves(
     max_units: int,
     rmp_cap: int = 10,
     planning_mode: bool = False,
+    prepared_pairs: Optional[list[list[SectionPair]]] = None,
 ) -> list[SectionPair]:
     """
     Attempt to add nice-to-have courses to an existing combination.
     For each nice-to-have, picks the highest-RMP pair that fits.
     Respects max_units cap and conflict constraints.
     Silently skips if nothing fits — nice-to-haves are best-effort.
+
+    prepared_pairs (from prepare_nice_to_have_pairs) lets callers that inject
+    into many variants skip the repeated filter/expand/sort work. When omitted
+    it is computed on the fly, preserving the original standalone behavior.
     """
     buffer_mins = 0 if planning_mode else (10 if constraints.no_back_to_back else 0)
     schedule = list(combination)
     current_units = sum(p.lecture.units for p in schedule)
 
-    for course_input in nice_to_have_inputs:
-        course_code = course_input.code or ""
-        raw_sections = all_sections.get(course_code, [])
-        if not raw_sections:
-            continue
+    if prepared_pairs is None:
+        prepared_pairs = prepare_nice_to_have_pairs(
+            nice_to_have_inputs, all_sections, constraints, rmp_cap, planning_mode=planning_mode
+        )
 
-        filtered, _ = filter_and_pin_sections(raw_sections, course_input, constraints, rmp_cap, planning_mode=planning_mode)
-        if not filtered:
-            continue
-
-        pairs, _, _ = expand_to_pairs(filtered, constraints, course_input.preferred_linked_section_ids, planning_mode=planning_mode)
+    for pairs in prepared_pairs:
         if not pairs:
             continue
 
         # Try highest-RMP pair that fits
-        pairs.sort(key=lambda p: p.lecture.rmp_score, reverse=True)
         for pair in pairs:
             if current_units + pair.lecture.units > max_units:
                 continue
@@ -1652,6 +1728,12 @@ def build_schedules(
     scored: list[tuple[float, list[SectionPair]]] = []
     buffer_mins = 0 if planning_mode else (10 if constraints.no_back_to_back else 0)
 
+    # Placed-INDEPENDENT nice-to-have prep, computed once and reused for every
+    # schedule variant below (only the per-schedule units + conflict checks vary).
+    nice_to_have_prepared = prepare_nice_to_have_pairs(
+        nice_to_have_inputs, all_sections, constraints, rmp_cap, planning_mode=planning_mode
+    )
+
     def _slot_for(ge_input: CourseInput) -> tuple[str, list[Section]]:
         """Resolve display name + candidate pool for one GE input."""
         if ge_input.categories:
@@ -1683,28 +1765,43 @@ def build_schedules(
         new_lecture.runner_ups = runner_ups
         return SectionPair(lecture=new_lecture, linked_sections=list(pair.linked_sections))
 
+    # Precompute the placed-INDEPENDENT GE ranking once per slot. The filter +
+    # expand + dedupe + RMP-sort is identical for every must-have combination —
+    # only the conflict-with-`combination` check below varies — so hoisting it
+    # out of the loop avoids redoing that work up to `max_combinations` times.
+    # (slot_name, ge_input, ranked_pairs) per GE input, in original order.
+    prepared_ge: list[tuple[str, CourseInput, list[SectionPair]]] = []
+    for ge_input in ge_inputs:
+        slot_name, candidates = _slot_for(ge_input)
+        ranked, _error = prepare_ge_pairs(
+            candidates, constraints, slot_name,
+            ge_input=ge_input, rmp_cap=rmp_cap, planning_mode=planning_mode,
+        )
+        prepared_ge.append((slot_name, ge_input, ranked))
+
     for combination in solver_result.combinations:
         # 3a. Rank candidates for each GE slot against this must-have combination.
         # Required GE: failure drops the combination. Optional GE: failure
         # silently skips that slot (matches nice-to-have semantics).
         per_slot_ranked: list[list[SectionPair]] = []
         slot_names: list[str] = []
-        ge_errors: list[str] = []
-        for ge_input in ge_inputs:
-            slot_name, candidates = _slot_for(ge_input)
-            ranked, error = rank_ge_candidates(
-                candidates, combination, constraints, slot_name,
-                ge_input=ge_input, rmp_cap=rmp_cap, planning_mode=planning_mode,
-            )
-            if error or not ranked:
+        placed_courses = {p.lecture.course for p in combination}
+        failed_required = False
+        for slot_name, ge_input, ranked in prepared_ge:
+            valid = [
+                p for p in ranked
+                if p.lecture.course not in placed_courses
+                and not pair_conflicts_with_any(p, combination, buffer_mins)
+            ]
+            if not valid:
                 if ge_input.is_optional:
                     continue
-                ge_errors.append(error or f"No valid courses for {slot_name}.")
+                failed_required = True
                 break
             slot_names.append(slot_name)
-            per_slot_ranked.append(ranked[:GE_VARIANTS_PER_SLOT])
+            per_slot_ranked.append(valid[:GE_VARIANTS_PER_SLOT])
 
-        if ge_errors:
+        if failed_required:
             continue
 
         # 3b. Enumerate cartesian variants. If there are no GE slots, run once
@@ -1751,6 +1848,7 @@ def build_schedules(
                 constraints.max_units,
                 rmp_cap,
                 planning_mode=planning_mode,
+                prepared_pairs=nice_to_have_prepared,
             )
 
             total_units = sum(p.lecture.units for p in schedule)
@@ -1833,7 +1931,6 @@ def build_schedules(
         schedules.append({
             "rank": rank,
             "score": score,
-            "image_base64": None,       # filled by image_gen.py in main.py
             **metadata,
             "courses": courses,
         })

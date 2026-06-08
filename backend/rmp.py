@@ -1,7 +1,16 @@
 import asyncio
 import base64
+import os
+import time
 import httpx
 from typing import Optional
+
+# Cross-request RMP cache. Professor ratings change very slowly (ratings only
+# accumulate over a term), so caching by name with a TTL makes repeat requests
+# near-instant in the RMP phase without meaningfully staling the data.
+# Keyed by professor name → (fetched_at_epoch, rmp_data_dict).
+_RMP_CACHE: dict[str, tuple[float, dict]] = {}
+_RMP_CACHE_TTL = float(os.getenv("RMP_CACHE_TTL", str(12 * 3600)))  # seconds, default 12h
 
 RMP_ENDPOINT = "https://www.ratemyprofessors.com/graphql"
 RMP_AUTH = "Basic dGVzdDp0ZXN0"   # base64("test:test") — RMP's public token
@@ -246,29 +255,42 @@ async def fetch_rmp(professor_name: str, client: httpx.AsyncClient) -> dict:
 async def fetch_rmp_scores(
     professor_names: list[str],
     client: httpx.AsyncClient,
-    concurrency: int = 5,
+    concurrency: int = 10,
 ) -> dict[str, dict]:
     """
     Fetch RMP data for a list of professor names.
     Returns {professor_name: rmp_data_dict}.
-    Deduplicates automatically — one API call per unique name.
+    Deduplicates automatically — one API call per unique name — and serves
+    fresh-enough names from the cross-request _RMP_CACHE without re-fetching.
     """
     unique = list(set(professor_names))
+    now = time.time()
+
+    result: dict[str, dict] = {}
+    to_fetch: list[str] = []
+    for name in unique:
+        entry = _RMP_CACHE.get(name)
+        if entry is not None and now - entry[0] < _RMP_CACHE_TTL:
+            result[name] = entry[1]
+        else:
+            to_fetch.append(name)
+
     semaphore = asyncio.Semaphore(concurrency)
-    cache: dict[str, dict] = {}
 
     async def _fetch_one(name: str) -> None:
         async with semaphore:
-            cache[name] = await fetch_rmp(name, client)
+            data = await fetch_rmp(name, client)
+        result[name] = data
+        _RMP_CACHE[name] = (time.time(), data)
 
-    await asyncio.gather(*[_fetch_one(p) for p in unique])
-    return cache
+    await asyncio.gather(*[_fetch_one(p) for p in to_fetch])
+    return result
 
 
 async def enrich_with_rmp(
     all_sections: dict,
     client: httpx.AsyncClient,
-    concurrency: int = 5,
+    concurrency: int = 10,
 ) -> None:
     """
     Mutates Section objects in place with RMP data.

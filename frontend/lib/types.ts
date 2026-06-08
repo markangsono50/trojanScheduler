@@ -172,7 +172,6 @@ export interface CourseEntry {
 export interface Schedule {
   rank: number                    // 1 | 2 | 3
   score: number                   // 0–100
-  image_base64: string            // base64 PNG from image_gen.py
   total_units: number
   days_with_class: string[]       // e.g. ["Mon", "Tue", "Wed", "Thu"]
   avg_rmp: number

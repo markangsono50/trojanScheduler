@@ -10,9 +10,10 @@ const STEPS = [
   { label: "Building your top 3 schedules",       delay: 17000 },
 ]
 
-// The bar fills to 99% over this window, then holds until the parent swaps in
-// results the instant the backend responds.
-const RAMP_MS = 4000
+// Progress % target when each step activates — matches step delays above.
+// After the last step the bar creeps slowly toward 99 until the response arrives.
+const STEP_TIMES = [0,  2500, 6000, 10000, 14000, 17000]
+const STEP_PCTS  = [5,  20,   38,   55,    72,    87   ]
 
 // Probability a given loading block is rendered gold (vs cardinal). Kept low so
 // the USC cardinal stays dominant while the mix is unique on every load.
@@ -57,9 +58,27 @@ export default function LoadingScreen() {
     )
     const start = Date.now()
     const tick = setInterval(() => {
-      const pct = Math.min(99, ((Date.now() - start) / RAMP_MS) * 100)
+      const elapsed = Date.now() - start
+      let pct: number
+
+      if (elapsed >= STEP_TIMES[STEP_TIMES.length - 1]) {
+        // After last step: creep from 87 → 99 over ~60s
+        pct = Math.min(99, 87 + ((elapsed - 17000) / 60000) * 12)
+      } else {
+        // Interpolate between current and next step target
+        let seg = 0
+        for (let i = 0; i < STEP_TIMES.length - 1; i++) {
+          if (elapsed >= STEP_TIMES[i] && elapsed < STEP_TIMES[i + 1]) {
+            seg = i
+            break
+          }
+        }
+        const t = (elapsed - STEP_TIMES[seg]) / (STEP_TIMES[seg + 1] - STEP_TIMES[seg])
+        pct = STEP_PCTS[seg] + t * (STEP_PCTS[seg + 1] - STEP_PCTS[seg])
+      }
+
       setProgress(pct)
-    }, 30)
+    }, 50)
     return () => {
       timers.forEach(clearTimeout)
       clearInterval(tick)

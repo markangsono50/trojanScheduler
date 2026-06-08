@@ -2,65 +2,82 @@
 One-time script — generates frontend/public/courses.json
 Fetches all courses across all USC departments using the existing scraper infrastructure.
 Run from the backend directory with the venv active:
-    python generate_course_list.py
+    python generate_course_list.py            # refuses to overwrite if total shrinks
+    python generate_course_list.py --force     # overwrite anyway
+
+Why sequential + long timeout:
+  The USC API is very slow for some departments (e.g. DSO ~110s) and returns
+  TRUNCATED course lists under concurrent load with no error. A concurrent run
+  therefore silently undercounts (DSO dropped to 1, CSCI 80→54, etc.). Fetching
+  one department at a time with a generous timeout returns the true counts.
 """
 
 import asyncio
 import json
 import os
+import sys
+from collections import Counter
+
 import httpx
 from scraper import build_school_lookup, HTTP_HEADERS, BASE_URL, TERM_CODE
 
 OUT_PATH = os.path.join(
     os.path.dirname(__file__), "..", "frontend", "public", "courses.json"
 )
-CONCURRENCY = 5      # low enough to avoid USC API rate limiting
-MAX_RETRIES = 3
+MAX_RETRIES = 4
+# DSO's endpoint can take ~110s; give read plenty of headroom.
+TIMEOUT = httpx.Timeout(connect=15.0, read=180.0, write=15.0, pool=180.0)
+REQUEST_DELAY = 0.3   # polite gap between sequential requests
 
 
 async def fetch_dept_courses(dept: str, school: str, client: httpx.AsyncClient) -> list[dict]:
+    """
+    Fetch one department's courses. Retries on both errors AND empty results —
+    an empty payload is often a load/slowness artifact rather than a truly empty
+    department, so we give it a few more tries before accepting [].
+    """
     for attempt in range(MAX_RETRIES):
         try:
             r = await client.get(
                 f"{BASE_URL}/Courses/CoursesByTermSchoolProgram",
                 params={"termCode": TERM_CODE, "school": school, "program": dept},
-                timeout=20,
+                timeout=TIMEOUT,
             )
             r.raise_for_status()
-            return r.json().get("courses") or []
+            courses = r.json().get("courses") or []
+            if courses:
+                return courses
+            # Empty — retry (with backoff) in case it's a transient truncation.
+            if attempt < MAX_RETRIES - 1:
+                await asyncio.sleep(1.0 * (attempt + 1))
         except Exception as e:
             if attempt < MAX_RETRIES - 1:
                 await asyncio.sleep(1.5 * (attempt + 1))  # back off between retries
             else:
                 print(f"  FAILED {dept}: {e}")
-    return []
+                return []
+    return []  # genuinely (or persistently) empty
 
 
 async def main():
-    async with httpx.AsyncClient(headers=HTTP_HEADERS, follow_redirects=True) as client:
+    force = "--force" in sys.argv or os.getenv("FORCE") == "1"
+
+    async with httpx.AsyncClient(headers=HTTP_HEADERS, follow_redirects=True, timeout=TIMEOUT) as client:
         print("Building school lookup...")
         school_lookup = await build_school_lookup(client)
         print(f"  {len(school_lookup)} departments found")
 
-        sem = asyncio.Semaphore(CONCURRENCY)
-
-        async def fetch_one(dept: str, school: str):
-            async with sem:
-                result = await fetch_dept_courses(dept, school, client)
-                return dept, school, result
-
-        tasks = [fetch_one(dept, school) for dept, school in school_lookup.items()]
-        print(f"Fetching courses for {len(tasks)} departments (concurrency={CONCURRENCY})...")
+        items = sorted(school_lookup.items())
+        print(f"Fetching courses for {len(items)} departments SEQUENTIALLY (slow but reliable)...")
 
         courses: list[dict] = []
         seen: set[str] = set()
-        done = 0
+        empties: list[str] = []
 
-        for coro in asyncio.as_completed(tasks):
-            dept, school, dept_courses = await coro
-            done += 1
-            if done % 25 == 0:
-                print(f"  {done}/{len(tasks)} departments done, {len(courses)} courses so far")
+        for done, (dept, school) in enumerate(items, start=1):
+            dept_courses = await fetch_dept_courses(dept, school, client)
+            if not dept_courses:
+                empties.append(dept)
 
             for c in dept_courses:
                 prefix = (c.get("prefix") or "").strip().upper()
@@ -75,13 +92,57 @@ async def main():
                     seen.add(code)
                     courses.append({"code": code, "title": title, "units": units})
 
+            if done % 25 == 0:
+                print(f"  {done}/{len(items)} departments done, {len(courses)} courses so far")
+
+            await asyncio.sleep(REQUEST_DELAY)
+
         courses.sort(key=lambda c: c["code"])
-        print(f"\nTotal unique courses: {len(courses)}")
+        new_total = len(courses)
+
+        # --- Regression guard + report -------------------------------------
+        old: list[dict] = []
+        if os.path.exists(OUT_PATH):
+            try:
+                with open(OUT_PATH, encoding="utf-8") as f:
+                    old = json.load(f)
+            except Exception:
+                old = []
+        old_total = len(old)
+
+        new_pre = Counter(c["code"].split()[0] for c in courses)
+        old_pre = Counter(c["code"].split()[0] for c in old)
+        lost = {
+            p: (old_pre[p], new_pre.get(p, 0))
+            for p in old_pre
+            if new_pre.get(p, 0) < old_pre[p]
+        }
+
+        print("\n" + "=" * 60)
+        print(f"Total unique courses: {new_total}  (previous file: {old_total}, delta {new_total - old_total:+d})")
+        print(f"Departments returning EMPTY: {len(empties)}")
+        if empties:
+            print(f"  {sorted(empties)}")
+        if lost:
+            print(f"Prefixes that LOST courses vs the existing file ({len(lost)}):")
+            for p, (o, n) in sorted(lost.items()):
+                print(f"  {p}: {o} -> {n}")
+        else:
+            print("No prefix lost courses vs the existing file.")
+        print("=" * 60)
+
+        if new_total < old_total and not force:
+            print(
+                f"\nREFUSING to overwrite: new total ({new_total}) < existing ({old_total}).\n"
+                f"This usually means some department fetches failed. Re-run, or pass --force "
+                f"(or FORCE=1) to overwrite anyway."
+            )
+            return
 
         with open(OUT_PATH, "w", encoding="utf-8") as f:
             json.dump(courses, f, separators=(",", ":"))
 
-        print(f"Written to {OUT_PATH}")
+        print(f"\nWritten to {OUT_PATH}")
 
 
 if __name__ == "__main__":

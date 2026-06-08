@@ -92,7 +92,14 @@ school_lookup: dict[str, str] = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global http_client, school_lookup
-    http_client = httpx.AsyncClient(headers=HTTP_HEADERS, follow_redirects=True, timeout=30.0)
+    # Generous read timeout: some USC department endpoints are very slow
+    # (e.g. DSO's CoursesByTermSchoolProgram takes ~110s). A short timeout makes
+    # those courses unusable in /generate and silently shrinks GE candidate pools.
+    http_client = httpx.AsyncClient(
+        headers=HTTP_HEADERS,
+        follow_redirects=True,
+        timeout=httpx.Timeout(connect=15.0, read=120.0, write=30.0, pool=120.0),
+    )
     school_lookup = await build_school_lookup(http_client)
     print(f"School lookup ready: {len(school_lookup)} departments")
     yield

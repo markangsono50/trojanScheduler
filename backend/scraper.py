@@ -12,6 +12,21 @@ HTTP_HEADERS = {
 
 LECTURE_MODES = {"Lecture", "Seminar", "Activity", "Workshop", "Screening"}
 
+
+def _is_primary_mode(rnr_mode: str) -> bool:
+    """
+    True for section modes that stand on their own as a primary section.
+
+    Besides the plain lecture modes, USC has self-contained combined sections
+    like "Lecture/Discussion" or "Lecture/Lab" (e.g. BUAD 307 section 14848):
+    a single section that already bundles the lecture and its discussion, so the
+    student does NOT also pick a separate Discussion/Lab. These arrive with no
+    linkCode, so if they aren't recognized as primaries they get mistaken for
+    orphan secondaries and attached to every real lecture — making the solver
+    pick Lecture + Discussion + Lecture/Discussion all at once.
+    """
+    return rnr_mode in LECTURE_MODES or (rnr_mode or "").startswith("Lecture/")
+
 MODALITY_MAP = {
     "Lecture":    "in_person",
     "Discussion": "in_person",
@@ -106,8 +121,8 @@ def extract_sections(course: dict) -> list[dict]:
     primary_groups: list[tuple[str, list, list]] = []  # (link_code, primaries, own_secondaries)
     orphan_secondaries: list = []
     for link_code, secs in link_groups.items():
-        primaries = [s for s in secs if s.get("rnrMode") in LECTURE_MODES]
-        secondaries = [s for s in secs if s.get("rnrMode") not in LECTURE_MODES]
+        primaries = [s for s in secs if _is_primary_mode(s.get("rnrMode"))]
+        secondaries = [s for s in secs if not _is_primary_mode(s.get("rnrMode"))]
         if primaries:
             primary_groups.append((link_code, primaries, secondaries))
         else:

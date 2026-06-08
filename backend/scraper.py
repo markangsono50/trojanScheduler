@@ -1,7 +1,13 @@
 import os
+import time
 import httpx
 
 TERM_CODE = os.getenv("TERM_CODE", "20263")  # Fall 2026 — set TERM_CODE env var to change semester
+
+# How long a fetched department catalog stays usable before we re-fetch it.
+# Catalog structure is stable within a term; only seat counts drift, so a short
+# TTL keeps repeat requests near-instant while staying fresh enough on seats.
+DEPT_CACHE_TTL = float(os.getenv("DEPT_CACHE_TTL", "300"))  # seconds, default 5 min
 BASE_URL = "https://classes.usc.edu/api"
 
 HTTP_HEADERS = {

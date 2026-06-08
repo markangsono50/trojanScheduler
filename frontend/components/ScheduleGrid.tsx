@@ -25,17 +25,46 @@ const COURSE_PALETTE = [
   "#B45309", // amber
   "#0E7490", // teal
   "#BE185D", // rose
+  "#1D4ED8", // blue
+  "#15803D", // green
+  "#9333EA", // purple
 ]
 const GE_COLOR = "#C2410C"          // burnt orange
 const DOUBLE_COUNT_BG = "#F0B400"   // USC gold for stacked-GE specials
 const DOUBLE_COUNT_FG = "#1A1A00"
 
-// Hash by course code so the same course gets the same color across all 3
-// result cards even when their other courses differ.
-function colorFor(courseCode: string): string {
+// Stable hash by course code — used as the *starting* palette index so a course
+// tends to keep the same color across all 3 result cards.
+function hashIndex(courseCode: string): number {
   let h = 0
   for (const ch of courseCode) h = (h * 31 + ch.charCodeAt(0)) | 0
-  return COURSE_PALETTE[Math.abs(h) % COURSE_PALETTE.length]
+  return Math.abs(h) % COURSE_PALETTE.length
+}
+
+// Assign each course in a schedule a UNIQUE palette color. We seed from the
+// stable hash (for cross-card consistency) but linear-probe to the next free
+// color on collision, so two different courses in the same schedule never share
+// a color (e.g. EE 141 vs CSCI 170). GE / double-count blocks use their own
+// dedicated colors and are excluded here.
+function buildColorMap(schedule: Schedule): Map<string, string> {
+  const map = new Map<string, string>()
+  const used = new Set<string>()
+  for (const course of schedule.courses) {
+    if (course.entry_type === "ge" || course.is_double_count) continue
+    if (map.has(course.course)) continue
+    let idx = hashIndex(course.course)
+    for (let i = 0; i < COURSE_PALETTE.length; i++) {
+      const candidate = COURSE_PALETTE[(idx + i) % COURSE_PALETTE.length]
+      if (!used.has(candidate)) {
+        idx = (idx + i) % COURSE_PALETTE.length
+        break
+      }
+    }
+    const color = COURSE_PALETTE[idx]
+    used.add(color)
+    map.set(course.course, color)
+  }
+  return map
 }
 
 function pos(t: string): number {
@@ -70,6 +99,9 @@ function titleCase(s: string): string {
 
 export default function ScheduleGrid({ schedule, size = "compact" }: Props) {
   const isLarge = size === "large"
+
+  // Per-schedule color assignment — guarantees distinct colors per course.
+  const colorMap = buildColorMap(schedule)
 
   // Density-dependent dimensions
   const dayHeaderSize = isLarge ? 11 : 9
@@ -198,6 +230,7 @@ export default function ScheduleGrid({ schedule, size = "compact" }: Props) {
                     <CourseBlock
                       key={course.section_id}
                       course={course}
+                      color={colorMap.get(course.course) ?? COURSE_PALETTE[0]}
                       isLarge={isLarge}
                       radius={blockRadius}
                     />

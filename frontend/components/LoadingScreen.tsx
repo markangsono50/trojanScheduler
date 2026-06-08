@@ -10,7 +10,13 @@ const STEPS = [
   { label: "Building your top 3 schedules",       delay: 17000 },
 ]
 
-const EXPECTED_DURATION_MS = 22000
+// The bar fills to 99% over this window, then holds until the parent swaps in
+// results the instant the backend responds.
+const RAMP_MS = 4000
+
+// Probability a given loading block is rendered gold (vs cardinal). Kept low so
+// the USC cardinal stays dominant while the mix is unique on every load.
+const GOLD_PROBABILITY = 0.35
 
 const DAYS = ["M", "T", "W", "Th", "F"]
 
@@ -37,15 +43,23 @@ export default function LoadingScreen() {
   const [activeStep, setActiveStep] = useState(0)
   const [progress, setProgress] = useState(0)
 
+  // Randomize each block's accent once per mount so every load is unique.
+  const [blocks] = useState(() =>
+    BLOCKS.map((b) => ({
+      ...b,
+      accent: (Math.random() < GOLD_PROBABILITY ? "gold" : "cardinal") as Block["accent"],
+    }))
+  )
+
   useEffect(() => {
     const timers = STEPS.map((s, i) =>
       setTimeout(() => setActiveStep(i), s.delay)
     )
     const start = Date.now()
     const tick = setInterval(() => {
-      const pct = Math.min(95, ((Date.now() - start) / EXPECTED_DURATION_MS) * 100)
+      const pct = Math.min(99, ((Date.now() - start) / RAMP_MS) * 100)
       setProgress(pct)
-    }, 100)
+    }, 30)
     return () => {
       timers.forEach(clearTimeout)
       clearInterval(tick)
@@ -119,7 +133,7 @@ export default function LoadingScreen() {
                 }}
               />
             ))}
-            {BLOCKS.map((b, i) => (
+            {blocks.map((b, i) => (
               <div
                 key={`block-${i}`}
                 className="loading-schedule-block"

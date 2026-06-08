@@ -246,6 +246,7 @@ export default function ScheduleGrid({ schedule, size = "compact" }: Props) {
                         key={`${course.section_id}-${ls.section_id}`}
                         course={course}
                         section={ls}
+                        color={colorMap.get(course.course) ?? COURSE_PALETTE[0]}
                         isLarge={isLarge}
                         radius={blockRadius}
                       />
@@ -264,10 +265,12 @@ export default function ScheduleGrid({ schedule, size = "compact" }: Props) {
 
 function CourseBlock({
   course,
+  color,
   isLarge,
   radius,
 }: {
   course: CourseEntry
+  color: string
   isLarge: boolean
   radius: number
 }) {
@@ -275,7 +278,7 @@ function CourseBlock({
   const heightPct = pos(course.end_time) - top
   const isGE = course.entry_type === "ge"
   const isDC = course.is_double_count
-  const bg = isDC ? DOUBLE_COUNT_BG : isGE ? GE_COLOR : colorFor(course.course)
+  const bg = isDC ? DOUBLE_COUNT_BG : isGE ? GE_COLOR : color
   const fg = isDC ? DOUBLE_COUNT_FG : "#ffffff"
   const fgFaded = isDC ? "rgba(26,26,0,0.65)" : "rgba(255,255,255,0.82)"
 
@@ -369,11 +372,13 @@ function CourseBlock({
 function LinkedBlock({
   course,
   section,
+  color,
   isLarge,
   radius,
 }: {
   course: CourseEntry
   section: LinkedSection
+  color: string
   isLarge: boolean
   radius: number
 }) {
@@ -384,7 +389,7 @@ function LinkedBlock({
   // so discussions / labs / quizzes read as siblings of the lecture rather
   // than faded satellites. The text content "{COURSE} {Type}" tells them
   // apart visually.
-  const bg = colorFor(course.course)
+  const bg = color
   const fg = "#ffffff"
   const fgFaded = "rgba(255,255,255,0.82)"
 

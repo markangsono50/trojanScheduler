@@ -47,7 +47,7 @@ export default function Home() {
         const course = data.needs_linked_section_prompt
 
         // Auto pick: skip the picker and resubmit with no preference
-        if (autoPickMode) {
+        if (payload.auto_pick_mode) {
           const existing = payload.linked_section_preferences ?? {}
           callGenerate({
             ...payload,

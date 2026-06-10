@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from scraper import build_school_lookup, clear_dept_cache, HTTP_HEADERS
+from scraper import build_school_lookup, HTTP_HEADERS
 
 # --- Pydantic models ---
 
@@ -88,10 +88,30 @@ def _resolve_entry(entry: CourseInput) -> tuple[str | None, str | None, str | No
 
 http_client: httpx.AsyncClient | None = None
 school_lookup: dict[str, str] = {}
+_ge_warmer_task: asyncio.Task | None = None
+
+
+async def _ge_warmer_loop():
+    """
+    Keep GE department catalogs warm in the dept cache. Re-warms on the cache
+    TTL cadence so /generate requests with GE slots rarely hit cold fetches.
+    fetch_dept_courses is a no-op for entries still within TTL, so each cycle
+    only re-fetches catalogs that have actually expired.
+    """
+    from scraper import DEPT_CACHE_TTL
+    from ge_finder import warm_ge_departments
+    while True:
+        try:
+            n = await warm_ge_departments(school_lookup, http_client)
+            print(f"GE warm-up complete: {n} departments cached")
+        except Exception as e:
+            print(f"GE warm-up failed (will retry): {e}")
+        await asyncio.sleep(DEPT_CACHE_TTL)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global http_client, school_lookup
+    global http_client, school_lookup, _ge_warmer_task
     # Generous read timeout: some USC department endpoints are very slow
     # (e.g. DSO's CoursesByTermSchoolProgram takes ~110s). A short timeout makes
     # those courses unusable in /generate and silently shrinks GE candidate pools.
@@ -102,7 +122,9 @@ async def lifespan(app: FastAPI):
     )
     school_lookup = await build_school_lookup(http_client)
     print(f"School lookup ready: {len(school_lookup)} departments")
+    _ge_warmer_task = asyncio.create_task(_ge_warmer_loop())
     yield
+    _ge_warmer_task.cancel()
     await http_client.aclose()
 
 # --- App ---
@@ -165,8 +187,6 @@ async def generate(req: GenerateRequest):
         CourseInput as SolverCourseInput,
         build_schedules,
     )
-
-    clear_dept_cache()
 
     linked_prefs: dict[str, dict[str, str]] = {
         code: dict(prefs) for code, prefs in (req.linked_section_preferences or {}).items()

@@ -85,11 +85,50 @@ async def fetch_ge_course_codes(
     return codes
 
 
+async def warm_ge_departments(
+    school_lookup: dict[str, str],
+    client: httpx.AsyncClient,
+    concurrency: int = 16,
+) -> int:
+    """
+    Prefetch the department catalogs behind every GE category into the dept
+    cache so /generate requests with GE slots never pay the cold-fetch cost.
+    Returns the number of departments fetched (for logging).
+    """
+    code_lists = await asyncio.gather(*[
+        fetch_ge_course_codes(cat, client) for cat in CATEGORY_PREFIX_MAP
+    ], return_exceptions=True)
+
+    depts: set[str] = set()
+    for codes in code_lists:
+        if isinstance(codes, Exception):
+            continue
+        for code in codes:
+            parts = code.split()
+            if len(parts) >= 2:
+                depts.add(parts[0])
+
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def _fetch(dept: str) -> None:
+        school = school_lookup.get(dept)
+        if not school:
+            return
+        async with semaphore:
+            try:
+                await fetch_dept_courses(dept, school, client)
+            except Exception:
+                pass
+
+    await asyncio.gather(*[_fetch(d) for d in depts])
+    return len(depts)
+
+
 async def build_ge_candidates(
     categories: list[str],
     school_lookup: dict[str, str],
     client: httpx.AsyncClient,
-    concurrency: int = 8,
+    concurrency: int = 16,
 ) -> dict[str, list[dict]]:
     """
     Build GE candidate pools for the requested category letters.

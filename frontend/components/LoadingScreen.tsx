@@ -245,10 +245,9 @@ export default function LoadingScreen() {
           />
         </div>
         <div
-          className="flex justify-between items-center mt-2"
+          className="flex justify-end items-center mt-2"
           style={{ color: "var(--text-tertiary)" }}
         >
-          <span style={{ fontSize: 13 }}>Usually takes 15 to 30 seconds</span>
           <span
             className="font-mono tabular-nums"
             style={{ fontSize: 12 }}

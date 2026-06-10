@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 import os
 import time
 import httpx
@@ -9,8 +10,38 @@ from typing import Optional
 # accumulate over a term), so caching by name with a TTL makes repeat requests
 # near-instant in the RMP phase without meaningfully staling the data.
 # Keyed by professor name → (fetched_at_epoch, rmp_data_dict).
+# Persisted to RMP_CACHE_PATH so it survives process restarts.
 _RMP_CACHE: dict[str, tuple[float, dict]] = {}
 _RMP_CACHE_TTL = float(os.getenv("RMP_CACHE_TTL", str(12 * 3600)))  # seconds, default 12h
+_RMP_CACHE_PATH = os.getenv(
+    "RMP_CACHE_PATH",
+    os.path.join(os.path.dirname(__file__), ".rmp_cache.json"),
+)
+
+
+def _load_rmp_cache() -> None:
+    try:
+        with open(_RMP_CACHE_PATH) as f:
+            raw = json.load(f)
+        now = time.time()
+        for name, (ts, data) in raw.items():
+            if now - ts < _RMP_CACHE_TTL:
+                _RMP_CACHE[name] = (ts, data)
+    except (OSError, ValueError):
+        pass
+
+
+def _save_rmp_cache() -> None:
+    try:
+        tmp = _RMP_CACHE_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(_RMP_CACHE, f)
+        os.replace(tmp, _RMP_CACHE_PATH)
+    except OSError:
+        pass
+
+
+_load_rmp_cache()
 
 RMP_ENDPOINT = "https://www.ratemyprofessors.com/graphql"
 RMP_AUTH = "Basic dGVzdDp0ZXN0"   # base64("test:test") — RMP's public token
@@ -255,7 +286,7 @@ async def fetch_rmp(professor_name: str, client: httpx.AsyncClient) -> dict:
 async def fetch_rmp_scores(
     professor_names: list[str],
     client: httpx.AsyncClient,
-    concurrency: int = 10,
+    concurrency: int = 25,
 ) -> dict[str, dict]:
     """
     Fetch RMP data for a list of professor names.
@@ -284,13 +315,15 @@ async def fetch_rmp_scores(
         _RMP_CACHE[name] = (time.time(), data)
 
     await asyncio.gather(*[_fetch_one(p) for p in to_fetch])
+    if to_fetch:
+        _save_rmp_cache()
     return result
 
 
 async def enrich_with_rmp(
     all_sections: dict,
     client: httpx.AsyncClient,
-    concurrency: int = 10,
+    concurrency: int = 25,
 ) -> None:
     """
     Mutates Section objects in place with RMP data.

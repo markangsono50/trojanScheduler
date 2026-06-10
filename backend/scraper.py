@@ -163,10 +163,31 @@ def extract_sections(course: dict) -> list[dict]:
     return result
 
 
-# ── Department-level cache (per request) ─────────────────────────────────────
+# ── Department-level cache (cross-request, TTL-based) ────────────────────────
 # Avoids re-fetching all 77 CSCI courses if the user entered both CSCI 270
-# and CSCI 350 in the same request.
-_dept_cache: dict[str, list] = {}
+# and CSCI 350 in the same request, and keeps catalogs warm across requests
+# for DEPT_CACHE_TTL seconds (seat counts may be up to that stale).
+# Keyed by "SCHOOL:DEPT" → (fetched_at_epoch, courses_list).
+_dept_cache: dict[str, tuple[float, list]] = {}
+
+
+async def _get_dept_courses(
+    cache_key: str,
+    dept: str,
+    school: str,
+    client: httpx.AsyncClient,
+) -> list:
+    entry = _dept_cache.get(cache_key)
+    if entry is not None and time.time() - entry[0] < DEPT_CACHE_TTL:
+        return entry[1]
+    r = await client.get(
+        f"{BASE_URL}/Courses/CoursesByTermSchoolProgram",
+        params={"termCode": TERM_CODE, "school": school, "program": dept},
+    )
+    r.raise_for_status()
+    courses = r.json().get("courses") or []
+    _dept_cache[cache_key] = (time.time(), courses)
+    return courses
 
 
 async def scrape_course(
@@ -187,17 +208,7 @@ async def scrape_course(
     if not school:
         return []
 
-    cache_key = f"{school}:{dept}"
-    if cache_key not in _dept_cache:
-        r = await client.get(
-            f"{BASE_URL}/Courses/CoursesByTermSchoolProgram",
-            params={"termCode": TERM_CODE, "school": school, "program": dept},
-        )
-        r.raise_for_status()
-        data = r.json()
-        _dept_cache[cache_key] = data.get("courses") or []
-
-    courses = _dept_cache[cache_key]
+    courses = await _get_dept_courses(f"{school}:{dept}", dept, school, client)
     course = next((c for c in courses if c.get("classNumber") == number), None)
     if not course:
         return []
@@ -211,22 +222,14 @@ async def fetch_dept_courses(
     client: httpx.AsyncClient,
 ) -> list:
     """
-    Fetch all courses for a department, using the per-request cache.
+    Fetch all courses for a department, using the TTL cache.
     Ge_finder calls this to scan departments without double-fetching.
     """
-    cache_key = f"{school}:{dept}"
-    if cache_key not in _dept_cache:
-        r = await client.get(
-            f"{BASE_URL}/Courses/CoursesByTermSchoolProgram",
-            params={"termCode": TERM_CODE, "school": school, "program": dept},
-        )
-        r.raise_for_status()
-        _dept_cache[cache_key] = r.json().get("courses") or []
-    return _dept_cache[cache_key]
+    return await _get_dept_courses(f"{school}:{dept}", dept, school, client)
 
 
 def clear_dept_cache() -> None:
-    """Call at the start of each /generate request to reset per-request cache."""
+    """Drop all cached department catalogs (tests / manual invalidation)."""
     _dept_cache.clear()
 
 
@@ -236,7 +239,7 @@ def lookup_section_in_cache(section_id: str) -> str | None:
     Returns the course code (e.g. "CSCI 270") if found, None otherwise.
     Only works after departments have been fetched (e.g. during GE candidate scraping).
     """
-    for courses in _dept_cache.values():
+    for _, courses in _dept_cache.values():
         for course in courses:
             for sec in (course.get("sections") or []):
                 if sec.get("sisSectionId") == section_id:

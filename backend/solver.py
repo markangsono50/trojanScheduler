@@ -12,7 +12,7 @@ Sections:
 from __future__ import annotations
 import copy
 from dataclasses import dataclass, field
-from itertools import product as _cart_product
+from itertools import combinations as _combinations, product as _cart_product
 from typing import Optional
 
 
@@ -1785,6 +1785,7 @@ def build_schedules(
         # silently skips that slot (matches nice-to-have semantics).
         per_slot_ranked: list[list[SectionPair]] = []
         slot_names: list[str] = []
+        slot_optional: list[bool] = []
         placed_courses = {p.lecture.course for p in combination}
         failed_required = False
         for slot_name, ge_input, ranked in prepared_ge:
@@ -1799,6 +1800,7 @@ def build_schedules(
                 failed_required = True
                 break
             slot_names.append(slot_name)
+            slot_optional.append(ge_input.is_optional)
             per_slot_ranked.append(valid[:GE_VARIANTS_PER_SLOT])
 
         if failed_required:
@@ -1806,61 +1808,90 @@ def build_schedules(
 
         # 3b. Enumerate cartesian variants. If there are no GE slots, run once
         # with an empty combo so existing logic (nice-to-haves, scoring) still
-        # fires.
-        variant_iter = _cart_product(*per_slot_ranked) if per_slot_ranked else [()]
-        variants_built = 0
-        for ge_combo in variant_iter:
-            if variants_built >= GE_VARIANTS_PER_COMBO_CAP:
-                break
+        # fires. A None entry in a slot's option list means "skip this slot"
+        # (only ever present for optional GE slots in the fallback pass).
+        def _enumerate_variants(per_slot_options: list[list]) -> int:
+            variant_iter = _cart_product(*per_slot_options) if per_slot_options else [()]
+            variants_built = 0
+            for ge_combo in variant_iter:
+                if variants_built >= GE_VARIANTS_PER_COMBO_CAP:
+                    break
 
-            # Prune GE↔GE conflicts (high-ranked picks across slots can still
-            # overlap in time).
-            ge_conflict = False
-            for i in range(len(ge_combo)):
-                for j in range(i + 1, len(ge_combo)):
-                    if ge_combo[i].lecture.course == ge_combo[j].lecture.course:
-                        ge_conflict = True
-                        break
-                    if pair_conflicts_with_pair(ge_combo[i], ge_combo[j], buffer_mins):
-                        ge_conflict = True
+                chosen_slots = [
+                    (i, pair) for i, pair in enumerate(ge_combo) if pair is not None
+                ]
+
+                # Prune GE↔GE conflicts (high-ranked picks across slots can still
+                # overlap in time).
+                ge_conflict = False
+                for a in range(len(chosen_slots)):
+                    for b in range(a + 1, len(chosen_slots)):
+                        pair_a = chosen_slots[a][1]
+                        pair_b = chosen_slots[b][1]
+                        if pair_a.lecture.course == pair_b.lecture.course:
+                            ge_conflict = True
+                            break
+                        if pair_conflicts_with_pair(pair_a, pair_b, buffer_mins):
+                            ge_conflict = True
+                            break
+                    if ge_conflict:
                         break
                 if ge_conflict:
+                    continue
+
+                # Build the schedule for this variant. Each GE pair is materialized
+                # via a Section copy so per-variant metadata (runner_ups, ge_slot)
+                # is independent.
+                schedule = list(combination)
+                for i, chosen in chosen_slots:
+                    runner_ups = [
+                        p for p in per_slot_ranked[i]
+                        if p.lecture.section_id != chosen.lecture.section_id
+                    ][:4]
+                    schedule.append(_materialize_ge(chosen, slot_names[i], runner_ups))
+
+                schedule = inject_nice_to_haves(
+                    schedule,
+                    nice_to_have_inputs,
+                    all_sections,
+                    constraints,
+                    constraints.max_units,
+                    rmp_cap,
+                    planning_mode=planning_mode,
+                    prepared_pairs=nice_to_have_prepared,
+                )
+
+                total_units = sum(p.lecture.units for p in schedule)
+                if total_units > constraints.max_units:
+                    continue
+
+                final_score = score_schedule(schedule, weights, constraints, planning_mode)
+                scored.append((final_score, schedule))
+                variants_built += 1
+
+                if len(scored) >= max_combinations:
                     break
-            if ge_conflict:
-                continue
+            return variants_built
 
-            # Build the schedule for this variant. Each GE pair is materialized
-            # via a Section copy so per-variant metadata (runner_ups, ge_slot)
-            # is independent.
-            schedule = list(combination)
-            for i, chosen in enumerate(ge_combo):
-                runner_ups = [
-                    p for p in per_slot_ranked[i]
-                    if p.lecture.section_id != chosen.lecture.section_id
-                ][:4]
-                schedule.append(_materialize_ge(chosen, slot_names[i], runner_ups))
+        built = _enumerate_variants(per_slot_ranked)
 
-            schedule = inject_nice_to_haves(
-                schedule,
-                nice_to_have_inputs,
-                all_sections,
-                constraints,
-                constraints.max_units,
-                rmp_cap,
-                planning_mode=planning_mode,
-                prepared_pairs=nice_to_have_prepared,
-            )
-
-            total_units = sum(p.lecture.units for p in schedule)
-            if total_units > constraints.max_units:
-                continue
-
-            final_score = score_schedule(schedule, weights, constraints, planning_mode)
-            scored.append((final_score, schedule))
-            variants_built += 1
-
-            if len(scored) >= max_combinations:
-                break
+        # Fallback: optional GE slots are best-effort. If forcing every slot in
+        # produced zero variants (GE↔GE conflicts or unit overflow), retry while
+        # skipping optional slots — fewest skips first, stopping at the first
+        # skip count that yields schedules, so we keep as many optional GEs as
+        # actually fit (a GE-less schedule must not outrank one with a GE that
+        # fits just because it has fewer days).
+        if built == 0 and any(slot_optional):
+            optional_idx = [i for i, o in enumerate(slot_optional) if o]
+            for n_skip in range(1, len(optional_idx) + 1):
+                for skip_set in _combinations(optional_idx, n_skip):
+                    fallback_options: list[list] = [
+                        [None] if i in skip_set else list(ranked)
+                        for i, ranked in enumerate(per_slot_ranked)
+                    ]
+                    built += _enumerate_variants(fallback_options)
+                if built:
+                    break
 
         if len(scored) >= max_combinations:
             break

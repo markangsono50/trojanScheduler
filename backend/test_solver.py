@@ -317,6 +317,91 @@ def test_planning_mode_ignores_seat_count_in_score():
     )
 
 
+def _make_ge_section(course, section_id, days, start, end, category, units=4.0):
+    s = make_section(course, section_id, days, start, end, units=units)
+    s.ge_categories = [category]
+    return s
+
+
+def test_optional_ge_slots_never_block_must_have_schedules():
+    # One must-have course; two optional GE slots whose only candidates
+    # (a) conflict with each other in time and (b) together exceed max_units.
+    # Best-effort semantics: schedules must still come back with the must-have
+    # (plus at most one GE), not fail outright.
+    sections = {
+        "CSCI 270": [
+            make_section("CSCI 270", "REQ1", ["Mon", "Wed"], "10:00", "11:00", units=4.0),
+        ],
+    }
+    ge_candidates = {
+        "Category A": [
+            _make_ge_section("AHIS 120", "GEA1", ["Tue"], "13:00", "14:00", "A", units=4.0),
+        ],
+        "Category B": [
+            _make_ge_section("PHIL 140", "GEB1", ["Tue"], "13:30", "14:30", "B", units=4.0),
+        ],
+    }
+    ge_inputs = [
+        CourseInput(input_type="ge", category="A", is_optional=True),
+        CourseInput(input_type="ge", category="B", is_optional=True),
+    ]
+    # max_units=8: must-have (4) + one GE (4) fits, both GEs (12) does not —
+    # and the two GEs overlap on Tue anyway.
+    cons = base_constraints(max_units=8)
+
+    result = build_schedules(
+        must_have_inputs=[CourseInput(input_type="course", code="CSCI 270")],
+        ge_inputs=ge_inputs,
+        nice_to_have_inputs=[],
+        all_sections=sections,
+        ge_candidates=ge_candidates,
+        constraints=cons,
+        planning_mode=False,
+    )
+    assert result["error"] is None, f"expected schedules, got error: {result['error']}"
+    assert result["schedules"], "optional GEs must not block must-have schedules"
+    top = result["schedules"][0]
+    courses = {c["course"] for c in top["courses"]}
+    assert "CSCI 270" in courses
+    ge_count = sum(1 for c in top["courses"] if c["entry_type"] == "ge")
+    assert ge_count == 1, f"expected exactly one GE to fit, got {ge_count}"
+
+
+def test_required_ge_still_fails_when_it_cannot_fit():
+    # Same setup but the GEs are REQUIRED — exceeding max_units with both
+    # must still produce no schedules (required semantics unchanged).
+    sections = {
+        "CSCI 270": [
+            make_section("CSCI 270", "REQ1", ["Mon", "Wed"], "10:00", "11:00", units=4.0),
+        ],
+    }
+    ge_candidates = {
+        "Category A": [
+            _make_ge_section("AHIS 120", "GEA1", ["Tue"], "13:00", "14:00", "A", units=4.0),
+        ],
+        "Category B": [
+            _make_ge_section("PHIL 140", "GEB1", ["Tue"], "13:30", "14:30", "B", units=4.0),
+        ],
+    }
+    ge_inputs = [
+        CourseInput(input_type="ge", category="A", is_optional=False),
+        CourseInput(input_type="ge", category="B", is_optional=False),
+    ]
+    cons = base_constraints(max_units=8)
+
+    result = build_schedules(
+        must_have_inputs=[CourseInput(input_type="course", code="CSCI 270")],
+        ge_inputs=ge_inputs,
+        nice_to_have_inputs=[],
+        all_sections=sections,
+        ge_candidates=ge_candidates,
+        constraints=cons,
+        planning_mode=False,
+    )
+    assert not result["schedules"], "required GEs that can't fit must still fail"
+    assert result["error"]
+
+
 TESTS = [
     test_planning_mode_returns_schedules_despite_tight_time_window,
     test_planning_mode_returns_schedules_despite_days_off,
@@ -327,6 +412,8 @@ TESTS = [
     test_adaptive_rmp_cap_finds_solution_when_top_10_conflict,
     test_planning_mode_penalizes_constraint_violations,
     test_planning_mode_ignores_seat_count_in_score,
+    test_optional_ge_slots_never_block_must_have_schedules,
+    test_required_ge_still_fails_when_it_cannot_fit,
 ]
 
 

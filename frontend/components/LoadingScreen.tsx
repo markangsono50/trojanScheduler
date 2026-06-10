@@ -62,8 +62,8 @@ export default function LoadingScreen() {
       let pct: number
 
       if (elapsed >= STEP_TIMES[STEP_TIMES.length - 1]) {
-        // After last step: creep from 87 → 99 over ~60s
-        pct = Math.min(99, 87 + ((elapsed - 17000) / 60000) * 12)
+        // After last step: creep from 87 → 99 over ~4s
+        pct = Math.min(99, 87 + ((elapsed - 17000) / 4000) * 12)
       } else {
         // Interpolate between current and next step target
         let seg = 0

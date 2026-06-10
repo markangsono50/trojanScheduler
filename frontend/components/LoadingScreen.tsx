@@ -3,17 +3,17 @@ import { useEffect, useState } from "react"
 
 const STEPS = [
   { label: "Reading your courses",                delay: 0 },
-  { label: "Scraping USC Schedule of Classes",    delay: 2500 },
-  { label: "Fetching RateMyProfessor scores",     delay: 6000 },
-  { label: "Finding GE options that fit",         delay: 10000 },
-  { label: "Running schedule optimizer",          delay: 14000 },
-  { label: "Building your top 3 schedules",       delay: 17000 },
+  { label: "Scraping USC Schedule of Classes",    delay: 600 },
+  { label: "Fetching RateMyProfessor scores",     delay: 1400 },
+  { label: "Finding GE options that fit",         delay: 2300 },
+  { label: "Running schedule optimizer",          delay: 3200 },
+  { label: "Building your top 3 schedules",       delay: 4000 },
 ]
 
 // Progress % target when each step activates — matches step delays above.
 // After the last step the bar creeps slowly toward 99 until the response arrives.
-const STEP_TIMES = [0,  2500, 6000, 10000, 14000, 17000]
-const STEP_PCTS  = [5,  20,   38,   55,    72,    87   ]
+const STEP_TIMES = [0,  600, 1400, 2300, 3200, 4000]
+const STEP_PCTS  = [5,  20,  38,   55,   72,   87  ]
 
 // Probability a given loading block is rendered gold (vs cardinal). Kept low so
 // the USC cardinal stays dominant while the mix is unique on every load.
@@ -30,14 +30,14 @@ type Block = {
 }
 
 const BLOCKS: Block[] = [
-  { col: 4, row: 1, rowSpan: 2, accent: "cardinal", delay: 2700 },
-  { col: 1, row: 3, rowSpan: 2, accent: "cardinal", delay: 3000 },
-  { col: 3, row: 3, rowSpan: 2, accent: "cardinal", delay: 3300 },
-  { col: 5, row: 3, rowSpan: 2, accent: "cardinal", delay: 3600 },
-  { col: 2, row: 5, rowSpan: 2, accent: "cardinal", delay: 6300 },
-  { col: 4, row: 5, rowSpan: 2, accent: "cardinal", delay: 6600 },
-  { col: 1, row: 7, rowSpan: 2, accent: "gold",     delay: 10300 },
-  { col: 3, row: 7, rowSpan: 2, accent: "gold",     delay: 10600 },
+  { col: 4, row: 1, rowSpan: 2, accent: "cardinal", delay: 650 },
+  { col: 1, row: 3, rowSpan: 2, accent: "cardinal", delay: 750 },
+  { col: 3, row: 3, rowSpan: 2, accent: "cardinal", delay: 850 },
+  { col: 5, row: 3, rowSpan: 2, accent: "cardinal", delay: 950 },
+  { col: 2, row: 5, rowSpan: 2, accent: "cardinal", delay: 1500 },
+  { col: 4, row: 5, rowSpan: 2, accent: "cardinal", delay: 1600 },
+  { col: 1, row: 7, rowSpan: 2, accent: "gold",     delay: 2400 },
+  { col: 3, row: 7, rowSpan: 2, accent: "gold",     delay: 2500 },
 ]
 
 export default function LoadingScreen() {
@@ -62,8 +62,8 @@ export default function LoadingScreen() {
       let pct: number
 
       if (elapsed >= STEP_TIMES[STEP_TIMES.length - 1]) {
-        // After last step: creep from 87 → 99 over ~4s
-        pct = Math.min(99, 87 + ((elapsed - 17000) / 4000) * 12)
+        // After last step: creep from 87 → 99 over ~2s
+        pct = Math.min(99, 87 + ((elapsed - 4000) / 2000) * 12)
       } else {
         // Interpolate between current and next step target
         let seg = 0

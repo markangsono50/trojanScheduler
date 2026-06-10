@@ -15,6 +15,12 @@ import {
   SwapState,
 } from "@/lib/types"
 
+// Keep the loading animation visible at least this long so it plays through,
+// even when the backend responds faster.
+const MIN_LOADING_MS = 4000
+const waitForMinLoading = (start: number) =>
+  new Promise<void>((r) => setTimeout(r, Math.max(0, MIN_LOADING_MS - (Date.now() - start))))
+
 export default function Home() {
   const [stage, setStage] = useState<AppStage>("form")
   const [response, setResponse] = useState<GenerateResponse | null>(null)
@@ -33,6 +39,7 @@ export default function Home() {
   const callGenerate = async (payload: GenerateRequest) => {
     setError(null)
     setStage("loading")
+    const loadingStart = Date.now()
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000"
       const res = await fetch(`${backendUrl}/generate`, {
@@ -93,6 +100,7 @@ export default function Home() {
         return
       }
 
+      await waitForMinLoading(loadingStart)
       setResponse(data)
       setSwapState({})
       setStage("results")

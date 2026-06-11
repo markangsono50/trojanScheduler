@@ -35,7 +35,6 @@ backend/
   scraper.py           # USC API section fetcher
   solver.py            # Backtracking schedule solver
   rmp.py               # RateMyProfessors enrichment
-  image_gen.py         # Schedule grid image renderer (Playwright)
   generate_course_list.py
   generate_ge_course_list.py
 
